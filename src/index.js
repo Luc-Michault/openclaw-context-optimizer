@@ -183,14 +183,20 @@ function sketchEnvStructure(text) {
   return { entries, emptyValues, placeholderValues };
 }
 
-/** Top-level YAML keys (no leading indent), bounded — not a full parser. */
+/**
+ * Best-effort line scan of top-level YAML keys — not a YAML parser.
+ * Skips `---` document separators; supports quoted keys; ignores comments.
+ */
 function sketchYamlTopKeys(text, max = 14) {
   const keys = [];
   const seen = new Set();
-  for (const line of text.split('\n')) {
+  for (const raw of text.split('\n')) {
     if (keys.length >= max) break;
+    const line = raw.split('#')[0];
+    if (/^\s*---\s*$/.test(line)) continue;
     if (/^\s+/.test(line)) continue;
-    const m = line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)\s*:/);
+    let m = line.match(/^["']([^"']+)["']\s*:/);
+    if (!m) m = line.match(/^([A-Za-z_][A-Za-z0-9_.-]*)\s*:/);
     if (m && !seen.has(m[1])) {
       seen.add(m[1]);
       keys.push(m[1]);
@@ -199,7 +205,9 @@ function sketchYamlTopKeys(text, max = 14) {
   return keys;
 }
 
-/** TOML table headers `[section]` only, bounded. */
+/**
+ * TOML table headers — line scan only (includes `[a.b]` inline-table parents).
+ */
 function sketchTomlTableNames(text, max = 14) {
   const names = [];
   for (const line of text.split('\n')) {
@@ -254,9 +262,25 @@ function gatherConfigStructureHints(text, displayTarget) {
   return { extraFileHints, configReadHints };
 }
 
-/** Lower = more urgent for "what to open next" in procedural docs. */
-function sectionActionPriority(title) {
+/**
+ * Lower = more urgent for "what to open next".
+ * Config-shaped docs: flat priority (all sections need exact read when editing).
+ */
+function sectionActionPriority(title, displayTarget, documentShape) {
+  if (documentShape.includes('likely-config-or-spec')) return 5;
   const t = String(title || '').toLowerCase();
+  const name = String(displayTarget || '').toLowerCase();
+  const skillLike = /skill\.md$|agents\.md$/i.test(name);
+  const changelogLike = /changelog|history|release.?notes/i.test(name);
+  if (skillLike) {
+    if (/when\s+to\s+use|workflow|constraints|anti-?patterns|examples|commands|guardrails/.test(t)) return 0;
+    if (/install|usage|prerequisites|getting\s+started|quick\s*start/.test(t)) return 1;
+    return 10;
+  }
+  if (changelogLike) {
+    if (/breaking|migration|deprecation|upgrade/.test(t)) return 0;
+    if (/^version|^\d+\.\d+|unreleased/i.test(t)) return 1;
+  }
   if (/install|installation|prerequisites|requirements|getting\s+started|quick\s*start/.test(t)) return 0;
   if (/usage|how\s+to\s+run|configuration|configure|options|environment|secrets?/.test(t)) return 1;
   if (/api|reference|troubleshoot|security|deploy|building|contributing/.test(t)) return 2;
@@ -343,7 +367,7 @@ function inferDocumentShape(text, lines, displayTarget) {
   const numbered = lines.filter((l) => /^\s*\d+[.)]\s+\S/.test(l)).length;
   if (numbered >= 5) roles.push('numbered-procedure');
   const fences = lines.filter((l) => /^```/.test(l)).length;
-  if (fences >= 4) roles.push('code-examples-present');
+  if (fences >= 6) roles.push('code-examples-present');
   if (/\b(VERSION|Changelog|Breaking|Deprecation|Migration)\b/i.test(text)) roles.push('release-notes-signals');
   if (/^(#{1,3})\s+(install|setup|usage|prerequisites|getting started)\b/im.test(text)) {
     roles.push('instruction-sections');
@@ -411,13 +435,13 @@ function smartReadFromText(text, displayTarget, budget, presetMeta) {
 
   if (markdownOutline.topSections.length) {
     const sorted = markdownOutline.topSections.slice().sort((a, b) => {
-      const pa = sectionActionPriority(a.title);
-      const pb = sectionActionPriority(b.title);
+      const pa = sectionActionPriority(a.title, displayTarget, documentShape);
+      const pb = sectionActionPriority(b.title, displayTarget, documentShape);
       if (pa !== pb) return pa - pb;
       return a.line - b.line;
     });
     for (const s of sorted.slice(0, 6)) {
-      const pri = sectionActionPriority(s.title);
+      const pri = sectionActionPriority(s.title, displayTarget, documentShape);
       const label = pri < 10 ? 'priority read' : 'next read';
       pushHint(`${label}: § h${s.level} @L${s.line} — ${s.title}`);
     }
@@ -800,6 +824,60 @@ function emptyTriageGroups() {
   };
 }
 
+/** Paths that must never appear in readNext / readNextSecondary. */
+function isReadNextNoisePath(relPath) {
+  const pl = relPath.replace(/\\/g, '/').toLowerCase();
+  if (
+    /^dist\/|^build\/|^out\/|^target\/|^\.next\/|^coverage\/|^node_modules\/|^\.git\//.test(pl) ||
+    /\/dist\/|\/build\/|\/out\/|\/target\/|\/\.next\/|\/node_modules\/|\/\.git\//.test(pl)
+  ) {
+    return true;
+  }
+  if (/\.lock$/i.test(pl)) return true;
+  if (/package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|cargo\.lock|poetry\.lock/i.test(pl)) {
+    return true;
+  }
+  if (/\.min\.(js|css)$|\.map$/i.test(pl) || /\.generated\./i.test(pl) || /\.bundle\.(js|mjs|cjs)$/i.test(pl)) {
+    return true;
+  }
+  return false;
+}
+
+function profileAdjustedPriority(candidate, rootRepoCtx, lower, rootNames, pkgFields) {
+  let p = candidate.priority;
+  const infs = new Set(rootRepoCtx.inferences || []);
+  const pl = candidate.path.toLowerCase();
+  const oc =
+    lower.has('openclaw.plugin.json') || infs.has('openclaw:extension-or-config') || lower.has('openclaw');
+  if (oc) {
+    if (/^skill\.md$/i.test(pl)) p -= 5;
+    if (pl === 'openclaw.plugin.json') p -= 4;
+    if (pl === 'agents.md') p -= 2;
+    if (pl.startsWith('src/') || pl.startsWith('openclaw/')) p -= 2;
+  }
+  const mono =
+    infs.has('monorepo:npm-workspaces') ||
+    infs.has('monorepo:workspace-root-files') ||
+    rootNames.includes('packages') ||
+    rootNames.includes('apps');
+  if (mono) {
+    if (['package.json', 'pnpm-workspace.yaml', 'turbo.json', 'nx.json'].includes(pl)) p -= 4;
+  }
+  const pub =
+    pkgFields &&
+    typeof pkgFields === 'object' &&
+    pkgFields.private !== true &&
+    typeof pkgFields.name === 'string' &&
+    pkgFields.name;
+  if (pub) {
+    if (/\/index\.(ts|js|mjs)$/.test(pl) || pl === 'lib/index.js' || pl === 'lib/index.mjs') p -= 3;
+  }
+  if (!lower.has('package.json') && !lower.has('cargo.toml') && lower.has('mkdocs.yml')) {
+    if (/^readme/i.test(pl) || pl === 'mkdocs.yml') p -= 5;
+  }
+  return p;
+}
+
 function triageGroupKey(pathStr, reason) {
   const pl = pathStr.toLowerCase();
   const t = `${pathStr} ${reason}`.toLowerCase();
@@ -876,6 +954,7 @@ function collectTreeTriage(rootDir, budget) {
 
   function pushCandidate(relPath, reason, priority) {
     const norm = relPath.replace(/\\/g, '/');
+    if (isReadNextNoisePath(norm)) return;
     const key = norm.toLowerCase();
     if (readNextSeen.has(key)) return;
     readNextSeen.add(key);
@@ -951,6 +1030,7 @@ function collectTreeTriage(rootDir, budget) {
     { names: ['docker-compose.yml', 'docker-compose.yaml'], reason: 'multi-service local stack', priority: 23 },
     { names: ['Makefile'], reason: 'build targets', priority: 24 },
     { names: ['CONTRIBUTING.md'], reason: 'contribution / dev workflow', priority: 25 },
+    { names: ['mkdocs.yml', 'mkdocs.yaml'], reason: 'documentation site config (MkDocs)', priority: 9 },
   ];
   for (const rule of PRIMARY_RULES) {
     for (const nm of rule.names) {
@@ -997,7 +1077,11 @@ function collectTreeTriage(rootDir, budget) {
     }
   }
 
-  candidates.sort((a, b) => a.priority - b.priority || a.path.localeCompare(b.path));
+  const rootRepoCtx = gatherRepoContext(root);
+  for (const c of candidates) {
+    c.adjustedPriority = profileAdjustedPriority(c, rootRepoCtx, lower, rootNames, pkgFields);
+  }
+  candidates.sort((a, b) => a.adjustedPriority - b.adjustedPriority || a.path.localeCompare(b.path));
   const readNextPrimary = candidates.slice(0, 8);
   const readNextSecondary = candidates.slice(8, 14);
   const readNextMerged = [...readNextPrimary, ...readNextSecondary];
@@ -1086,13 +1170,26 @@ function collectTreeTriage(rootDir, budget) {
 
   const whyThisMatters = [];
   if (readNextPrimary.length) {
-    const top = readNextPrimary
+    const top3 = readNextPrimary
       .slice(0, 3)
       .map((r) => r.path)
       .join(', ');
-    whyThisMatters.push(
-      `Start here: open ${top} in order — they are ranked for “how do I run / what are the rules / what is this repo”.`,
-    );
+    const inf = rootRepoCtx.inferences || [];
+    if (lower.has('openclaw.plugin.json') || inf.some((i) => /openclaw/i.test(i))) {
+      whyThisMatters.push(
+        `OpenClaw extension: open ${top3} first (manifest + skill/agent docs), then src/ or openclaw/ — not random tree files.`,
+      );
+    } else if (rootNames.includes('packages') || rootNames.includes('apps') || inf.some((x) => String(x).startsWith('monorepo:'))) {
+      whyThisMatters.push(
+        `Monorepo: use ${top3} to learn workspace + scripts, then open packages/* or apps/* leaves as needed.`,
+      );
+    } else if (!lower.has('package.json') && !lower.has('cargo.toml') && lower.has('mkdocs.yml')) {
+      whyThisMatters.push(`Docs-first repo: read ${top3} and docs/ before hunting for app source.`);
+    } else {
+      whyThisMatters.push(
+        `Do this: open ${top3} in order — package/scripts/constraints before diving into src/ or tests.`,
+      );
+    }
   }
   if (readNextSecondary.length) {
     whyThisMatters.push(
@@ -1112,8 +1209,8 @@ function collectTreeTriage(rootDir, budget) {
   const readNextPaths = readNextPrimary.map((r) => r.path);
   const readNextSecondaryPaths = readNextSecondary.map((r) => r.path);
   const readNextContext = {
-    openFirst: readNextPaths.slice(0, 4),
-    thenReview: readNextPaths.slice(4).concat(readNextSecondaryPaths),
+    openFirst: readNextPaths.slice(0, 5),
+    thenReview: readNextPaths.slice(5).concat(readNextSecondaryPaths),
   };
 
   const triageGroups = emptyTriageGroups();
@@ -1122,7 +1219,6 @@ function collectTreeTriage(rootDir, budget) {
     if (triageGroups[g].length < 6) triageGroups[g].push({ path: item.path, reason: item.reason });
   }
 
-  const rootRepoCtx = gatherRepoContext(root);
   const profileSet = new Set(repoProfile);
   for (const inf of rootRepoCtx.inferences || []) profileSet.add(inf);
   if (pkgFields && pkgFields.bin) profileSet.add('likely-cli-or-bin-package');
@@ -1132,6 +1228,9 @@ function collectTreeTriage(rootDir, budget) {
   }
   if ((rootRepoCtx.inferences || []).includes('npm:non-private-manifest')) {
     profileSet.add('likely-public-npm-manifest');
+  }
+  if (lower.has('openclaw.plugin.json') && (lower.has('src') || lower.has('openclaw'))) {
+    profileSet.add('openclaw-extension');
   }
   const repoProfileMerged = deterministicSort([...profileSet]);
 

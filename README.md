@@ -2,7 +2,7 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
-> **OpenClaw-first, agent-first** (v0.9). Local reduction + repo-aware **`advise`** (with **confidence scores** and **`worthReadingExactlyReasons`**) before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
+> **OpenClaw-first, agent-first** (**v1.0** — stable API). Local reduction + repo-aware **`advise`** (confidence, **`worthReadingExactlyReasons`**, binary/huge-file guards) before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**. **Stable imports:** [API.md](./API.md) · **History:** [CHANGELOG.md](./CHANGELOG.md).
 
 ## Why this exists
 
@@ -23,6 +23,13 @@ OpenClaw already has excellent primitives for exact reads and shell work. This t
 - `context-optimizer` is best when a local artifact is too noisy to read raw.
 
 See [`openclaw/README.md`](./openclaw/README.md) for plugin install (optional **`suggestOnLargeRead`** hook) and [`openclaw/SKILL.md`](./openclaw/SKILL.md) for the step-by-step agent method.
+
+### When not to use
+
+- **Binary or special files** — `advise` sets **`isBinaryArtifact`** or **`pathIssue`**; do not run text reducers on them.
+- **Tiny exact snippets** — use native **`read`**.
+- **Shell streams** — **RTK**, not `smart-log` on a saved pipe dump.
+- **Trusting compression ratio alone** — use **`advise`** + **`readNext`** / section hints; see metrics **`qualityHints`** as heuristics only.
 
 ### Which tool when? (compact)
 
@@ -92,11 +99,20 @@ JSON reducer output includes `meta.preset`, `meta.presetRequested`, `meta.preset
 
 ### Policy (`advise`)
 
-`advise` prints JSON: **`action`**, **`confidence`**, **`confidenceScore`** (0–100, maps to the label), **`why[]`**, **`recommendedCli`** / **`recommendedCommand`**, **`nextStepIfInsufficient`**, **`repoContext`** (markers, stacks, **`inferences`**), **`pathRoles`**, **`alternatives[]`**, **`worthReadingExactly`**. Same rules live in `src/policy.js` (`require('openclaw-context-optimizer/policy')`).
+`advise` prints JSON: **`action`**, **`confidence`**, **`confidenceScore`**, **`why[]`**, **`recommendedCli`** / **`recommendedCommand`**, **`nextStepIfInsufficient`**, **`repoContext`**, **`pathRoles`**, **`alternatives[]`**, **`worthReadingExactly`**, **`worthReadingExactlyReasons[]`**, **`isBinaryArtifact`**, **`pathIssue`**. Policy module: `require('openclaw-context-optimizer/policy')`. Full stable list: [API.md](./API.md).
 
 ### Metrics privacy
 
 Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
+
+## What changed in v1.0
+
+- **Stability** — documented public API ([API.md](./API.md)), **`SUGGESTION_CONTRACT_VERSION` `1.0.0`**, subpath **`openclaw-context-optimizer/suggest`**
+- **smart-tree** — profile-aware ranking (OpenClaw extension, monorepo, published npm, docs/MkDocs), noise paths never in read lists, **`openFirst` ≤ 5**, actionable **`whyThisMatters`**, **`openclaw-extension`** profile
+- **smart-read** — SKILL/AGENTS/changelog section priorities; tighter **`code-examples-present`**; better YAML key sketch
+- **Policy** — binary / huge / special-file handling; symlink note; **`isBinaryArtifact`** / **`pathIssue`**
+- **Tests** — realistic **`test/fixtures/fixture-*`** repos, **`v1.0-fixtures.test.js`**, **`v1.0-workflow.test.js`** (advise → tree → advise → smart-read)
+- **CHANGELOG** — [CHANGELOG.md](./CHANGELOG.md)
 
 ## What changed in v0.9
 

@@ -1,0 +1,9 @@
+{
+  "name": "fixture-published-pkg",
+  "version": "2.0.0",
+  "main": "lib/index.js",
+  "module": "lib/index.mjs",
+  "files": [
+    "lib"
+  ]
+}

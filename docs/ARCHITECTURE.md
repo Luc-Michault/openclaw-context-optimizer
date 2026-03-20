@@ -1,6 +1,6 @@
 # Architecture
 
-Project/package name: `openclaw-context-optimizer`
+Project/package name: `openclaw-context-optimizer` (**v1.0** — see [API.md](../API.md) for the stable import surface).
 
 ## Overview
 

@@ -97,3 +97,15 @@ test('classifyPathRoles tags readme and locks', () => {
   assert.ok(roles.includes('doc:readme'));
   assert.ok(classifyPathRoles('/repo/package-lock.json', '/repo').includes('lock:generated'));
 });
+
+test('advise binary file recommends raw-read and flags isBinaryArtifact', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-bin-'));
+  const fp = path.join(dir, 'blob.bin');
+  fs.writeFileSync(fp, Buffer.from([0x00, 0x01, 0x02, 0xff]));
+  const a = advise({ path: fp, sizeBytes: 4 });
+  assert.strictEqual(a.isBinaryArtifact, true);
+  assert.strictEqual(a.shouldReduce, false);
+  assert.strictEqual(a.action, 'raw-read');
+});

@@ -6,7 +6,7 @@
 const path = require('path');
 
 /** Bump when adding/removing top-level suggestion fields (semver of the object, not the package). */
-const SUGGESTION_CONTRACT_VERSION = '0.9.0';
+const SUGGESTION_CONTRACT_VERSION = '1.0.0';
 
 /** Documented stable keys (for consumers); order not guaranteed on object iteration. */
 const LARGE_READ_SUGGESTION_KEYS = [
@@ -36,6 +36,8 @@ const LARGE_READ_SUGGESTION_KEYS = [
   'projectNote',
   'repoRoot',
   'logLine',
+  'isBinaryArtifact',
+  'pathIssue',
 ];
 
 /**
@@ -182,6 +184,8 @@ function buildLargeReadSuggestion(resolvedPath, sizeBytes, cfg = {}) {
     projectNote: d.projectNote,
     repoRoot: d.repoRoot,
     logLine: '',
+    isBinaryArtifact: Boolean(d.isBinaryArtifact),
+    pathIssue: d.pathIssue != null ? d.pathIssue : null,
   };
   suggestion.logLine = renderSuggestionLogLine(suggestion);
   return suggestion;

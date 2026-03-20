@@ -8,6 +8,8 @@ const SMALL_FILE_BYTES = 24 * 1024;
 const LARGE_TEXT_BYTES = 256 * 1024;
 /** Very large → aggressive preset by default. */
 const HUGE_BYTES = 2 * 1024 * 1024;
+/** Above this, advise warns against loading the whole file into context. */
+const MAX_ADVISE_WHOLE_FILE_BYTES = 100 * 1024 * 1024;
 
 function normalizeExt(p, extension) {
   if (extension != null && extension !== '') return String(extension).replace(/^\./, '').toLowerCase();
@@ -335,8 +337,182 @@ function buildAdviseContext(input) {
   };
 }
 
+/**
+ * Shell/exec intent must come from explicit `commandHint` only — never from file paths
+ * (e.g. a path like `/var/log/pipeline-output.log` must not imply RTK).
+ */
 function isShellCommandHint(hint) {
   return hint === 'shell' || hint === 'exec' || hint === 'rtk' || hint === 'pipeline';
+}
+
+/**
+ * Inspect a local file for advise: binary (NUL in first bytes), huge size, special types.
+ */
+function inspectLocalFile(absPath, reportedSize) {
+  const out = {
+    binary: false,
+    unsupportedSpecial: false,
+    huge: false,
+    symlink: false,
+    sizeBytes: Number(reportedSize) || 0,
+  };
+  if (!absPath || !fs.existsSync(absPath)) return out;
+  let lst;
+  try {
+    lst = fs.lstatSync(absPath);
+  } catch {
+    return out;
+  }
+  if (lst.isSymbolicLink()) out.symlink = true;
+  let st;
+  try {
+    st = fs.statSync(absPath);
+  } catch {
+    return out;
+  }
+  if (
+    (typeof st.isSocket === 'function' && st.isSocket()) ||
+    (typeof st.isFIFO === 'function' && st.isFIFO()) ||
+    (typeof st.isCharacterDevice === 'function' && st.isCharacterDevice()) ||
+    (typeof st.isBlockDevice === 'function' && st.isBlockDevice())
+  ) {
+    out.unsupportedSpecial = true;
+    return out;
+  }
+  if (!st.isFile()) return out;
+  out.sizeBytes = st.size;
+  if (st.size > MAX_ADVISE_WHOLE_FILE_BYTES) {
+    out.huge = true;
+    return out;
+  }
+  const toRead = Math.min(512, st.size || 512);
+  if (toRead <= 0) return out;
+  let fd;
+  try {
+    fd = fs.openSync(absPath, 'r');
+    const buf = Buffer.alloc(toRead);
+    const n = fs.readSync(fd, buf, 0, toRead, 0);
+    if (buf.subarray(0, n).includes(0)) out.binary = true;
+  } catch {
+    /* ignore */
+  } finally {
+    if (fd != null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return out;
+}
+
+function adviseUnsupportedSpecial(ctx) {
+  const { p, repoRoot, projectNote, basename, parentDir, extension: ext, sizeBytes } = ctx;
+  const why = ['Path is a socket, FIFO, or device — not a regular file for reducer/verbatim workflows.'];
+  return {
+    action: 'raw-read',
+    confidence: 'low',
+    confidenceScore: 40,
+    why,
+    recommendedCommand: null,
+    recommendedCli: null,
+    reducerCommand: null,
+    kind: 'text',
+    preset: null,
+    shouldReduce: false,
+    reduceReason: why.join(' '),
+    nextStepIfInsufficient: 'Use OS-appropriate tools; do not treat as text payload.',
+    path: p,
+    isDirectory: false,
+    sizeBytes,
+    extension: ext || null,
+    basename,
+    parentDir,
+    repoRoot,
+    projectNote,
+    repoContext: gatherRepoContext(repoRoot),
+    pathRoles: p ? classifyPathRoles(p, repoRoot) : [],
+    alternatives: [],
+    worthReadingExactly: null,
+    worthReadingExactlyReasons: [],
+    isBinaryArtifact: false,
+    pathIssue: 'special-file',
+  };
+}
+
+function adviseHugeFile(ctx) {
+  const { p, repoRoot, projectNote, basename, parentDir, extension: ext } = ctx;
+  const sz = ctx.sizeBytes;
+  const why = [
+    `File is larger than ~${Math.round(MAX_ADVISE_WHOLE_FILE_BYTES / (1024 * 1024))}MB (${sz} bytes) — avoid loading entirely into model context.`,
+  ];
+  return {
+    action: 'raw-read',
+    confidence: 'low',
+    confidenceScore: 50,
+    why,
+    recommendedCommand: null,
+    recommendedCli: null,
+    reducerCommand: null,
+    kind: 'text',
+    preset: null,
+    shouldReduce: false,
+    reduceReason: why.join(' '),
+    nextStepIfInsufficient:
+      'Use ranged reads, streaming, or external CLI (head/tail/dd); re-run advise on a slice path if you extract one.',
+    path: p,
+    isDirectory: false,
+    sizeBytes: sz,
+    extension: ext || null,
+    basename,
+    parentDir,
+    repoRoot,
+    projectNote,
+    repoContext: gatherRepoContext(repoRoot),
+    pathRoles: p ? classifyPathRoles(p, repoRoot) : [],
+    alternatives: [],
+    worthReadingExactly: null,
+    worthReadingExactlyReasons: [],
+    isBinaryArtifact: false,
+    pathIssue: 'huge-file',
+  };
+}
+
+function adviseBinaryArtifact(ctx) {
+  const { p, repoRoot, projectNote, basename, parentDir, extension: ext, sizeBytes } = ctx;
+  const why = ['Binary file (NUL bytes in header): text reducers are inappropriate.'];
+  return {
+    action: 'raw-read',
+    confidence: 'medium',
+    confidenceScore: 58,
+    why,
+    recommendedCommand: 'Do not ingest binary as UTF-8 text; use hex/metadata tools outside the model if needed.',
+    recommendedCli: null,
+    reducerCommand: null,
+    kind: 'text',
+    preset: null,
+    shouldReduce: false,
+    reduceReason: why.join(' '),
+    nextStepIfInsufficient: 'If you need content, use file/hexdump on the host; do not run smart-read/smart-json on binaries.',
+    path: p,
+    isDirectory: false,
+    sizeBytes,
+    extension: ext || null,
+    basename,
+    parentDir,
+    repoRoot,
+    projectNote,
+    repoContext: gatherRepoContext(repoRoot),
+    pathRoles: p ? classifyPathRoles(p, repoRoot) : [],
+    alternatives: [
+      { action: 'raw-read', note: 'Only if you mistakenly pointed at a binary; otherwise pick a text artifact' },
+    ],
+    worthReadingExactly: null,
+    worthReadingExactlyReasons: [],
+    isBinaryArtifact: true,
+    pathIssue: null,
+  };
 }
 
 /** Phase 3–5: shell / exec stream → RTK (not file reducers). */
@@ -377,6 +553,8 @@ function adviseShellStream(ctx) {
     ],
     worthReadingExactly: null,
     worthReadingExactlyReasons: [],
+    isBinaryArtifact: false,
+    pathIssue: null,
   };
 }
 
@@ -434,6 +612,8 @@ function adviseDirectory(ctx) {
       'readNext orders manifests and agent docs before generic source files',
       'Tree text is for orientation; file reads should follow triage paths',
     ],
+    isBinaryArtifact: false,
+    pathIssue: null,
   };
 }
 
@@ -444,7 +624,6 @@ const NEXT_IF_REDUCER_INSUFFICIENT =
 function adviseFile(ctx, input) {
   const {
     p,
-    sizeBytes,
     extension: ext,
     basename,
     parentDir,
@@ -453,6 +632,12 @@ function adviseFile(ctx, input) {
     repoRoot,
     projectNote,
   } = ctx;
+  const inspect = inspectLocalFile(p, ctx.sizeBytes);
+  if (inspect.unsupportedSpecial) return adviseUnsupportedSpecial({ ...ctx, sizeBytes: inspect.sizeBytes });
+  if (inspect.huge) return adviseHugeFile({ ...ctx, sizeBytes: inspect.sizeBytes });
+  if (inspect.binary) return adviseBinaryArtifact({ ...ctx, sizeBytes: inspect.sizeBytes });
+  const sizeBytes = inspect.sizeBytes;
+  const symlinkNote = inspect.symlink;
   const why = [];
   const reduce = shouldReduce({ path: p, sizeBytes, extension: ext, commandHint: input.commandHint });
   const rec = recommendedReducer({ path: p, extension: ext, mimeHint: input.mimeHint });
@@ -462,6 +647,7 @@ function adviseFile(ctx, input) {
 
   if (!reduce.reduce) {
     why.push(reduce.reason);
+    if (symlinkNote) why.push('Path is a symlink; size and sampling use the target file.');
     if (/^(readme|contributing|agents|changelog)/i.test(basename)) why.push('Doc entrypoints are often read verbatim when small.');
     if (roles.includes('lock:generated')) why.push('Lockfile: exact pins matter for audits—verbatim read is normal when small.');
     if (roles.includes('manifest:node') && sizeBytes < SMALL_FILE_BYTES * 2) {
@@ -520,10 +706,13 @@ function adviseFile(ctx, input) {
       ],
       worthReadingExactly,
       worthReadingExactlyReasons,
+      isBinaryArtifact: false,
+      pathIssue: null,
     };
   }
 
   why.push(reduce.reason);
+  if (symlinkNote) why.push('Path is a symlink; size and sampling use the target file.');
   if (sizeBytes >= threshold) why.push(`Size is above the large-file hint threshold (~${threshold} bytes).`);
   if (/\.(env|local|secret)/i.test(basename)) why.push('Sensitive names: reducer triages shape; use raw read only for exact secrets handling.');
   if (roles.includes('doc:readme') && (ext === 'md' || ext === '')) {
@@ -581,6 +770,8 @@ function adviseFile(ctx, input) {
     ],
     worthReadingExactly,
     worthReadingExactlyReasons,
+    isBinaryArtifact: false,
+    pathIssue: null,
   };
 }
 
@@ -638,6 +829,8 @@ function explainPolicyDecision(input) {
     lines.push('worth reading exactly (why):');
     for (const r of a.worthReadingExactlyReasons) lines.push(`  - ${r}`);
   }
+  if (a.isBinaryArtifact) lines.push('binary artifact: true (do not use text reducers)');
+  if (a.pathIssue) lines.push(`path issue: ${a.pathIssue}`);
   lines.push(a.recommendedCommand ? `next: ${a.recommendedCommand}` : 'next: (see rtk-shell guidance)');
   lines.push(`if insufficient: ${a.nextStepIfInsufficient}`);
   return lines.join('\n');

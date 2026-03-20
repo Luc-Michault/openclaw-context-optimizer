@@ -1,0 +1,6 @@
+[project]
+name = "fixture-python-cli"
+version = "0.1.0"
+readme = "README.md"
+[project.scripts]
+fixture-cli = "fixture_pkg.cli:main"

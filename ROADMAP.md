@@ -1,5 +1,14 @@
 # Roadmap
 
+## v1.0 shipped (validation + stable API)
+
+- [x] **Realistic fixtures** — `test/fixtures/fixture-*` (Node app, published pkg, Python CLI, Rust CLI, monorepo, OpenClaw ext, docs-heavy) + reasoning tests
+- [x] **smart-tree** — profile-aware ranking, noise exclusion, focused **`openFirst`**, actionable **`whyThisMatters`**
+- [x] **smart-read** — doc-type section priorities, YAML sketch hardening
+- [x] **Policy** — binary / huge / special files, **`isBinaryArtifact`** / **`pathIssue`**
+- [x] **Workflow test** — `test/v1.0-workflow.test.js`
+- [x] **API.md** + **CHANGELOG.md** + version **1.0.0** + plugin schema bump
+
 ## v0.9 shipped (natural-reflex polish)
 
 - [x] **smart-tree v4** — tighter **readNext** ordering, **readNextContext**, **triageGroups** `generated` / `other`, clearer **whyThisMatters**

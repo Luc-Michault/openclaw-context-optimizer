@@ -1,0 +1,13 @@
+{
+  "name": "fixture-node-app",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.0.0"
+  }
+}

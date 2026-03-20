@@ -1,5 +1,7 @@
 # Skill: OpenClaw Context Optimizer (local triage before expensive reads)
 
+**v1.0** — behavior matches the shipped toolkit; stable API summary: [API.md](../API.md).
+
 This skill describes how an **OpenClaw agent** should use `openclaw-context-optimizer` (`context-optimizer` CLI) as a **first-pass capability** on local artifacts. It complements **RTK** (shell stream shaping); it does not replace native `read` or RTK-wrapped `exec`.
 
 ---

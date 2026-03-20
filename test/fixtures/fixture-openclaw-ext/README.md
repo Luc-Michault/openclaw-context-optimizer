@@ -1,0 +1,3 @@
+# Extension
+
+OpenClaw plugin fixture.
