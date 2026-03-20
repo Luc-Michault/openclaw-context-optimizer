@@ -32,6 +32,7 @@ These tools **complement** each other; they do not solve the same problem.
 
 ## Anti-patterns
 
+- Enabling OpenClaw plugin hooks expecting **automatic read rewriting** — the plugin only emits **optional** structured suggestions; RTK still owns exec streams.
 - Expecting this package to **rewrite every exec** like RTK — out of scope.
 - Piping RTK output into `smart-log` **instead of** using RTK’s own shaping — redundant; pick one layer per hop.
 - Using reducers on **tiny** files when a targeted `read` is enough — see `context-optimizer advise <path>`.

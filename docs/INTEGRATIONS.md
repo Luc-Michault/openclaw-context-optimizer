@@ -9,7 +9,7 @@ The intended OpenClaw flow is now:
 ```bash
 context-optimizer advise .
 context-optimizer smart-tree . --preset=triage
-# then exact read on triageHints.readNext / readNextPaths
+# then triageHints.triageGroups + readNext / readNextSecondary, then exact reads
 ```
 
 For file artifacts:
@@ -40,11 +40,11 @@ context-optimizer advise ./some-output.txt --command-hint=exec
 
 `advise` emits a decision object including:
 - `action` (`raw-read` | `reduce` | `rtk-shell`)
-- `confidence`
+- `confidence` + **`confidenceScore`** (numeric; label includes **very-high** at repo-root `smart-tree`)
 - `why[]`
 - `recommendedCli` / `recommendedCommand`
 - `nextStepIfInsufficient`
-- path/repo hints when available
+- **`repoContext`** (markers, stacks, **inferences**), **`pathRoles`**, **`alternatives[]`**, **`worthReadingExactly`**
 
 Use `require('openclaw-context-optimizer/policy')` (or the main package re-exports) to apply the same logic programmatically.
 
@@ -56,7 +56,7 @@ Current plugin behavior:
 - passive registration by default
 - opt-in `suggestOnLargeRead`
 - can filter on `readToolNames`, `extensions`, `matchers`
-- logs a bounded suggestion before large read-like tool calls
+- **`require('./openclaw/suggest')`** — `buildLargeReadSuggestion`, `renderSuggestionLogLine`, `emitLargeReadSuggestion`; optional **`onSuggestion`** on the config object when the plugin is registered programmatically (not from JSON); `logSuggestions: false` skips `console.warn`
 - does **not** rewrite tool calls automatically
 
 ### Example helper stub
@@ -70,6 +70,7 @@ export CONTEXT_OPTIMIZER_METRICS=1
 context-optimizer smart-log ./big.log --preset=agent --json
 context-optimizer metrics
 context-optimizer metrics --json
+# JSON aggregate includes tuningHints + qualityHints
 ```
 
 Optional:

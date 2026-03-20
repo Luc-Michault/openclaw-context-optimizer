@@ -35,9 +35,9 @@ This skill describes how an **OpenClaw agent** should use `openclaw-context-opti
 ## Recommended workflow
 
 1. **Classify** — file vs directory vs “this came from exec” (if exec → RTK).
-2. Run **`context-optimizer advise <path>`** — get `action` (`raw-read` | `reduce` | `rtk-shell`), `why[]`, `recommendedCli` / `recommendedCommand`, `nextStepIfInsufficient`.
+2. Run **`context-optimizer advise <path>`** — get `action` (`raw-read` | `reduce` | `rtk-shell`), **`confidence`** + **`confidenceScore`**, `why[]`, `recommendedCli` / `recommendedCommand`, `nextStepIfInsufficient`, plus **`alternatives[]`**, **`worthReadingExactly`**, **`pathRoles`**, **`repoContext`** (incl. **inferences**).
 3. If **`reduce`**, run the suggested command (e.g. `smart-log`, `smart-json`, `smart-tree`) with the suggested **`--preset`**.
-4. **Read the bounded summary** — anomalies, structure, `readNext` hints, duplicates, etc.
+4. **Read the bounded summary** — anomalies, structure, `readNext` / section hints (`markdownOutline` for docs), duplicates, etc.
 5. Only then **`read`** the 3–7 highest-signal paths or line ranges the summary points to.
 6. If the reducer was insufficient, follow **`nextStepIfInsufficient`** from `advise` (usually: deeper targeted `read` or re-run after refresh).
 
@@ -59,9 +59,17 @@ Use **`--json`** when another tool must parse the result; use **`--metrics`** wh
 
 ## `smart-tree` triage output
 
-- **`triageHints.readNext`** — ordered `{ path, reason }[]` (what to open next and why).
-- **`triageHints.readNextPaths`** — same paths as strings (compat / quick checks).
-- **`recentlyTouched`**, **`stackSignals`**, **`whyThisMatters`** — bounded, deterministic hints.
+- **`triageHints.readNext`** — primary shortlist `{ path, reason }[]` (AGENTS/README/manifests/**`bin`/`module`/`main`** — deterministic priority).
+- **`triageHints.readNextSecondary`** — tooling / license / tsconfig / test-runner configs after the primary pass.
+- **`triageHints.triageGroups`** — same candidates grouped by intent (**startHere**, **buildDeploy**, **runtimeSource**, **configTooling**, **tests**, **docs**).
+- **`readNextPaths`** / **`readNextSecondaryPaths`** — string copies for quick checks.
+- **`repoProfile`**, **`stackSignals`**, **`whyThisMatters`** — classification + *what to do first* (not just description).
+
+## `smart-read` on large docs
+
+- **`markdownOutline`** — heading counts, **`depthSummary`** (e.g. `h1:2 h2:5`), top sections with line numbers.
+- **`documentShape`** — e.g. checklist-heavy, procedural doc, config-shaped filename.
+- **`readNextHints`** — concrete “next read § @ line …” suggestions before a full verbatim pull.
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "id": "openclaw-context-optimizer",
   "name": "OpenClaw Context Optimizer",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Local file/log/JSON/CSV/tree reducers and policy helpers for agent triage before expensive reads",
   "homepage": "https://github.com/Luc-Michault/openclaw-context-optimizer",
   "license": "MIT",

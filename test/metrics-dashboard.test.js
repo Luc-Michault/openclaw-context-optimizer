@@ -25,4 +25,5 @@ test('metrics dashboard renders preset/source/runtime fields', () => {
   assert.match(output, /repos: demo:1/);
   assert.match(output, /avg ratio \/ command:/);
   assert.match(output, /workflowTag:/);
+  assert.match(output, /tuning/);
 });

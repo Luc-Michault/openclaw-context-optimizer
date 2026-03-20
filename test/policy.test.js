@@ -7,6 +7,7 @@ const {
   recommendedPreset,
   explainPolicyDecision,
   advise,
+  classifyPathRoles,
 } = require('../src/policy');
 
 test('large log recommends reduce', () => {
@@ -44,7 +45,7 @@ test('explainPolicyDecision is non-empty string', () => {
     sizeBytes: 400,
     extension: 'json',
   });
-  assert.ok(s.includes('action:') && s.includes('next:'));
+  assert.ok(s.includes('action:') && s.includes('next:') && /score=\d+/.test(s));
 });
 
 test('advise directory recommends smart-tree', () => {
@@ -53,10 +54,26 @@ test('advise directory recommends smart-tree', () => {
   assert.strictEqual(a.action, 'reduce');
   assert.strictEqual(a.reducerCommand, 'smart-tree');
   assert.ok(a.recommendedCli && a.recommendedCli.includes('smart-tree'));
+  assert.ok(a.confidence === 'high' || a.confidence === 'very-high');
+  assert.ok(Array.isArray(a.alternatives) && a.alternatives.length >= 1);
+  assert.ok(Array.isArray(a.pathRoles));
+  assert.ok(a.repoContext && Array.isArray(a.repoContext.markers));
+});
+
+test('large npm lockfile prefers reduce with distinct reason', () => {
+  const r = shouldReduce({ path: '/proj/package-lock.json', sizeBytes: 200_000, extension: 'json' });
+  assert.strictEqual(r.reduce, true);
+  assert.ok(/lockfile|npm lockfile|smart-json/i.test(r.reason));
 });
 
 test('advise exec hint is rtk-shell', () => {
   const a = advise({ path: '/tmp/x.log', sizeBytes: 9_000_000, commandHint: 'exec' });
   assert.strictEqual(a.action, 'rtk-shell');
   assert.strictEqual(a.shouldReduce, false);
+});
+
+test('classifyPathRoles tags readme and locks', () => {
+  const roles = classifyPathRoles('/repo/README.md', '/repo');
+  assert.ok(roles.includes('doc:readme'));
+  assert.ok(classifyPathRoles('/repo/package-lock.json', '/repo').includes('lock:generated'));
 });

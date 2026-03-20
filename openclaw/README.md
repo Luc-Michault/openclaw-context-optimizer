@@ -15,7 +15,7 @@ OpenClaw already has strong primitives:
 
 1. Copy **the files inside** this package’s `openclaw/` directory into an extension folder, e.g.  
    `~/.openclaw/extensions/openclaw-context-optimizer/`  
-   so **`index.js`** and **`openclaw.plugin.json`** sit next to each other (same layout as other extensions such as `rtk-rewrite`).
+   so **`index.js`**, **`suggest.js`**, and **`openclaw.plugin.json`** sit together (same layout as other extensions such as `rtk-rewrite`).
 2. Register it in `~/.openclaw/openclaw.json` under `plugins.entries`, for example:
 
 ```json
@@ -32,7 +32,7 @@ OpenClaw already has strong primitives:
 
 By default the plugin only loads configuration and optionally logs bootstrap lines when `verbose` is true.
 
-**Opt-in:** set `suggestOnLargeRead: true` to register a narrow `before_tool_call` hook: for configured read-like tools (default tool name `read`), if the resolved path is a file **≥ `maxFileBytes`**, the plugin logs a one-line **`advise`** summary (action + suggested reducer/preset). No tool calls are rewritten. Use **`matchers`** / **`extensions`** to limit noise.
+**Opt-in:** set `suggestOnLargeRead: true` for a narrow `before_tool_call` hook. For read-like tools (default `read`), files **≥ `maxFileBytes`** trigger **`emitLargeReadSuggestion`**: structured object (**`schemaVersion`**, same fields as **`advise`** incl. **`confidenceScore`**), optional **`onSuggestion(suggestion, { toolName, params })`** when the plugin is registered **in code** (not from JSON), and **`renderSuggestionLogLine`** unless **`logSuggestions: false`**. No tool rewriting. **`matchers`**: path substring; **`extensions`**: allowlist when set. Use **`require('./suggest')`** for the API without the hook.
 
 Use the **CLI** or **`require()`** the library for real reductions. Agent workflow is also described in [SKILL.md](./SKILL.md). See [RTK coexistence](../docs/RTK_COMPAT.md).
 

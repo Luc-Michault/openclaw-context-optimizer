@@ -1,5 +1,23 @@
 # Roadmap
 
+## v0.8 shipped (runtime-ready suggestions + policy phases)
+
+- [x] **Plugin contract** — `schemaVersion`, stable `LARGE_READ_SUGGESTION_KEYS`, `renderSuggestionLogLine` vs `buildLargeReadSuggestion`, `emitLargeReadSuggestion` + optional **`onSuggestion`** (programmatic config), `logSuggestions: false` for callback-only
+- [x] **Policy** — phased `buildAdviseContext`, numeric **`confidenceScore`** + label, richer **alternatives** / **worthReadingExactly**, **`gatherRepoContext.inferences`**, path **generated-output** roles
+- [x] **smart-tree** — **package.json `bin` / `module`**, **`triageGroups`** buckets, **repoProfile** merged with policy inferences + npm shape hints
+- [x] **smart-read** — **depthSummary**, stronger **config** / **instruction** hints
+- [x] **Metrics** — **`qualityHints`** (heuristic misuse / preset review) + dashboard section
+- [x] Tests + docs alignment
+
+## v0.7 shipped (trust + triage depth)
+
+- [x] **`openclaw/suggest.js`** — structured large-read suggestions (reusable object, log as renderer)
+- [x] **Policy v3** — repo markers, path roles, alternatives, worthReadingExactly, lock/manifest nuance, very-high confidence at repo root
+- [x] **`smart-tree` v3** — ranked readNext + readNextSecondary + repoProfile + sharper whyThisMatters; main-before-index ordering
+- [x] **`smart-read`** — markdownOutline, documentShape, better readNextHints
+- [x] **Metrics** — `tuningHints` for preset/command/workflow tuning from avg ratios
+- [x] Docs pass (README, ARCHITECTURE, INTEGRATIONS, RTK_COMPAT, openclaw README, SKILL)
+
 ## v0.6 shipped (OpenClaw capability layer)
 
 - [x] `openclaw/SKILL.md` — agent workflow + RTK boundary

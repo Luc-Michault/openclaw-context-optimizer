@@ -2,7 +2,7 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
-> **OpenClaw-first, agent-first** (v0.6). Local reduction + **`advise`** policy before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
+> **OpenClaw-first, agent-first** (v0.8). Local reduction + repo-aware **`advise`** (with **confidence scores**) before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
 
 ## Why this exists
 
@@ -86,25 +86,33 @@ CLI flags like `--max-lines`, `--max-depth`, `--json-depth`, and `--budget` stil
 | `--strict-preset` | Fail if `--preset` is not a known name (no silent fallback to `balanced`) |
 | `--workflow-tag=TAG` | Stored on each metrics row (or `CONTEXT_OPTIMIZER_WORKFLOW_TAG`) |
 
-For **`metrics`**, add `--json` to print `aggregateMetrics` + a recent tail (machine-readable).
+For **`metrics`**, add `--json` to print `aggregateMetrics` + a recent tail (includes **`tuningHints`** and **`qualityHints`** — compression stats plus heuristic “preset/workflow review” notes).
 
 JSON reducer output includes `meta.preset`, `meta.presetRequested`, `meta.presetCoerced` so agents see when a typo was corrected.
 
 ### Policy (`advise`)
 
-`advise` prints JSON: **`action`** (`raw-read` | `reduce` | `rtk-shell`), **`confidence`**, **`why[]`**, **`recommendedCli`** / **`recommendedCommand`**, **`nextStepIfInsufficient`**, plus path/repo hints. Same rules live in `src/policy.js` (`require('openclaw-context-optimizer/policy')`).
+`advise` prints JSON: **`action`**, **`confidence`**, **`confidenceScore`** (0–100, maps to the label), **`why[]`**, **`recommendedCli`** / **`recommendedCommand`**, **`nextStepIfInsufficient`**, **`repoContext`** (markers, stacks, **`inferences`**), **`pathRoles`**, **`alternatives[]`**, **`worthReadingExactly`**. Same rules live in `src/policy.js` (`require('openclaw-context-optimizer/policy')`).
 
 ### Metrics privacy
 
 Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
 
-## What changed in v0.6
+## What changed in v0.8
 
-- **`openclaw/SKILL.md`**: OpenClaw agent workflow (advise → reducer → targeted read; RTK boundary)
-- **`smart-tree` v2**: `triageHints.readNext` as **`{ path, reason }[]`**, plus **`readNextPaths`**, **`stackSignals`**, **`whyThisMatters`**, optional **`package.json` `main`** hint
-- **Policy v2**: richer **`advise()`**; CLI **`advise`** emits the full decision object + explanation
-- **Plugin v2**: opt-in **`suggestOnLargeRead`** (`before_tool_call`), **`readToolNames`**, **`matchers`**, **`extensions`**, **`logSuggestions`**
-- **Metrics**: per-command / per-preset **avg ratio**, **`workflowTagGroups`** in `aggregateMetrics` + dashboard lines
+- **Plugin API**: versioned suggestion object (`schemaVersion`), **`renderSuggestionLogLine`**, **`emitLargeReadSuggestion`**, optional **`onSuggestion(suggestion, { toolName, params })`** when you register the plugin programmatically; **`logSuggestions: false`** = callback only
+- **Policy**: **`buildAdviseContext`**, **`confidenceScore`**, **`repoContext.inferences`**, expanded **alternatives** (incl. RTK / raw-read cross-hints), clearer **worthReadingExactly** for manifests
+- **`smart-tree`**: **`package.json` `bin` / `module`**, **`triageGroups`** (startHere, buildDeploy, runtimeSource, configTooling, tests, docs), richer **repoProfile**
+- **`smart-read`**: **heading `depthSummary`**, stronger config + instruction cues
+- **Metrics**: **`qualityHints`** alongside tuning ratios
+
+## v0.7 (recap)
+
+- Structured suggest.js, policy v3 fields, smart-tree v3 lists, tuning metrics
+
+## v0.6 (recap)
+
+- Skill doc, `readNext` with reasons, plugin `suggestOnLargeRead`, metrics ratios + workflow groups
 
 ## v0.5 (recap)
 

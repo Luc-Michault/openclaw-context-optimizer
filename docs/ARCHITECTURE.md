@@ -29,7 +29,8 @@ bin/context-optimizer.js
 
 openclaw/
   +-- SKILL.md                  (agent workflow: advise → reducer → exact read)
-  +-- index.js                  (plugin with opt-in suggestOnLargeRead)
+  +-- index.js                  (plugin; opt-in suggestOnLargeRead)
+  +-- suggest.js                (versioned suggestion contract, filters, render vs emit)
   +-- openclaw.plugin.json      (plugin schema)
   +-- README.md                 (install + runtime notes)
 ```
@@ -58,6 +59,8 @@ Current actions are:
 - `reduce`
 - `rtk-shell`
 
+`advise` returns **repoContext** (markers, stacks, **inferences**), **pathRoles**, **confidenceScore** (0–100) + label, **alternatives[]**, and **worthReadingExactly** — deterministic, no network. Internal flow: **`buildAdviseContext`** → branch (shell / directory / file) → decision.
+
 This keeps agent behavior inspectable and debuggable.
 
 ### 2. Presets over config sprawl
@@ -73,8 +76,8 @@ Reducers attach:
 ### 3. Scoped, deterministic reducers
 
 Reducers stay intentionally narrow and bounded:
-- `smart-tree`: repo/project triage with `triageHints.readNext`, `readNextPaths`, `stackSignals`, `whyThisMatters`
-- `smart-read`: markdown/config awareness, todo summary, read-next hints
+- `smart-tree`: **`readNext`** / **`readNextSecondary`**, **`triageGroups`** (intent buckets), **`repoProfile`** (+ policy inferences), `stackSignals`, **`whyThisMatters`**
+- `smart-read`: markdown **outline** (heading counts + top sections), **documentShape** hints, todo summary, section-level **readNextHints**
 - `smart-json`: structure + merged issue/operational hint pass, bounded large-array handling
 - `smart-log`: anomaly grouping + first/last anomaly summary
 
@@ -86,16 +89,18 @@ The system computes:
 - aggregate summaries (`aggregateMetrics`)
 - per-command / per-preset ratios
 - workflow tag groupings
+- **`aggregateMetrics().tuningHints`** — avg ratio leaders; **`qualityHints`** — heuristic preset/workflow review (not ML)
 
 Optional privacy mode (`CONTEXT_OPTIMIZER_METRICS_SAFE=1`) strips `cwd` and truncates error text.
 
 ### 5. Safe OpenClaw integration
 
 The plugin is intentionally **opt-in and non-aggressive**.
-Current v0.6 behavior:
+Current behavior:
 - passive registration by default
 - optional `suggestOnLargeRead` hook on read-like tools
-- can filter by `readToolNames`, `extensions`, `matchers`
+- **`openclaw/suggest.js`**: `buildLargeReadSuggestion` → stable **`schemaVersion`** object; **`renderSuggestionLogLine`**; **`emitLargeReadSuggestion`** separates delivery from generation (optional **`onSuggestion`** when config is built in code, plus `logSuggestions`)
+- filter by `readToolNames`, `extensions`, `matchers` (substring match on normalized path)
 - does **not** rewrite tool calls automatically
 
 This preserves trust while still making the runtime more useful.
@@ -114,7 +119,7 @@ To keep output stable across runs:
 The intended loop is now explicit:
 1. run `advise`
 2. apply the recommended reducer/preset if needed
-3. inspect bounded summary (`readNext`, anomalies, structure, hints)
+3. inspect bounded summary (`readNext`, `readNextSecondary`, anomalies, structure, hints)
 4. exact `read` only on the most relevant files/sections
 5. patch or act after scope is narrowed
 

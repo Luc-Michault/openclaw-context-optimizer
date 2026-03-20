@@ -14,4 +14,6 @@ test('aggregateMetrics groups by command and preset', () => {
   assert.ok(agg.topInputsApprox[0].inputTokensEst >= 500);
   assert.ok(agg.avgRatioByCommand['smart-read'] != null);
   assert.ok(agg.workflowTagGroups && typeof agg.workflowTagGroups['(no tag)'] === 'object');
+  assert.ok(agg.tuningHints && Array.isArray(agg.tuningHints.hints));
+  assert.ok(Array.isArray(agg.qualityHints));
 });

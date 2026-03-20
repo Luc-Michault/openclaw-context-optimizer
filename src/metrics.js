@@ -120,6 +120,12 @@ function formatDashboard(entries) {
     `presets: ${topMap(presets)}`,
     projects.size ? `repos: ${topMap(projects, 3)}` : 'repos: none',
     '',
+    ...(agg.tuningHints && agg.tuningHints.hints.length
+      ? ['tuning (ratio = output/input, lower ≈ more compression):', ...agg.tuningHints.hints.map((h) => `  • ${h}`), '']
+      : []),
+    ...(agg.qualityHints && agg.qualityHints.length
+      ? ['quality heuristics (human review):', ...agg.qualityHints.map((h) => `  • ${h}`), '']
+      : []),
     'recent runs (newest last):',
     '──────────────────────────────────────',
   ];
@@ -181,6 +187,64 @@ function topAvgRatios(avgMap, limit = 5) {
     .join('  ');
 }
 
+/** Heuristic hints for tuning presets/workflows (lower ratio ≈ smaller output vs input). */
+function buildTuningHints(avgRatioByPreset, avgRatioByCommand, workflowTagGroups) {
+  const presetList = Object.entries(avgRatioByPreset).filter(([, v]) => v != null && Number.isFinite(v));
+  presetList.sort((a, b) => a[1] - b[1] || String(a[0]).localeCompare(String(b[0])));
+  const cmdList = Object.entries(avgRatioByCommand).filter(([, v]) => v != null && Number.isFinite(v));
+  cmdList.sort((a, b) => a[1] - b[1] || String(a[0]).localeCompare(String(b[0])));
+  const wfList = Object.entries(workflowTagGroups || {}).map(([tag, g]) => ({
+    tag,
+    avgRatio: g.avgRatio,
+    runs: g.runs,
+  }));
+  wfList.sort((a, b) => (b.avgRatio || 0) - (a.avgRatio || 0) || String(a.tag).localeCompare(String(b.tag)));
+
+  const hints = [];
+  if (presetList[0]) {
+    hints.push(`lowest avg ratio preset: ${presetList[0][0]} (${presetList[0][1].toFixed(3)})`);
+  }
+  if (cmdList[0]) {
+    hints.push(`lowest avg ratio command: ${cmdList[0][0]} (${cmdList[0][1].toFixed(3)})`);
+  }
+  if (wfList[0] && wfList[0].avgRatio != null && Number.isFinite(wfList[0].avgRatio)) {
+    hints.push(`highest avg ratio workflowTag: ${wfList[0].tag} (${wfList[0].avgRatio.toFixed(3)})`);
+  }
+
+  return {
+    hints,
+    bestPresetByAvgRatio: presetList[0] || null,
+    tightestCommandByAvgRatio: cmdList[0] || null,
+    hottestWorkflowTagByAvgRatio: wfList[0] && wfList[0].avgRatio != null ? wfList[0] : null,
+  };
+}
+
+/** Heuristic quality / misuse signals (not ground truth). */
+function buildQualityHints(avgRatioByPreset, avgRatioByCommand, entries) {
+  const hints = [];
+  const ag = avgRatioByPreset.aggressive;
+  const agent = avgRatioByPreset.agent;
+  const tri = avgRatioByPreset.triage;
+  if (ag != null && agent != null && ag > agent + 0.07 && ag > 0.32) {
+    hints.push('aggressive preset avg ratio runs higher than agent — try triage for first-pass repo/doc scans');
+  }
+  if (tri != null && agent != null && tri > agent + 0.1 && tri > 0.4) {
+    hints.push('triage outputs are large vs agent — consider lowering tree/json budgets if summaries feel verbose');
+  }
+  const st = avgRatioByCommand['smart-tree'];
+  const sr = avgRatioByCommand['smart-read'];
+  if (st != null && sr != null && st > sr + 0.12) {
+    hints.push('smart-tree compression weaker than smart-read — very wide repos may need shallower depth or smaller budget');
+  }
+  if (entries.length >= 10) {
+    const failed = entries.filter((e) => e.success === false).length;
+    if (failed / entries.length > 0.2) {
+      hints.push('many failed runs — check invalid paths/JSON; poor ratios on failures skew averages');
+    }
+  }
+  return hints;
+}
+
 function aggregateMetrics(entries) {
   const byCommand = {};
   const byPreset = {};
@@ -230,6 +294,9 @@ function aggregateMetrics(entries) {
     };
   }
 
+  const tuningHints = buildTuningHints(avgRatioByPreset, avgRatioByCommand, workflowTagGroups);
+  const qualityHints = buildQualityHints(avgRatioByPreset, avgRatioByCommand, entries);
+
   return {
     windowRuns: entries.length,
     okRuns: ok,
@@ -243,6 +310,8 @@ function aggregateMetrics(entries) {
     avgRatioByCommand,
     avgRatioByPreset,
     workflowTagGroups,
+    tuningHints,
+    qualityHints,
     topSavingsApprox: savings.slice(0, 15),
     topInputsApprox: inputs.slice(0, 15),
   };
@@ -257,4 +326,6 @@ module.exports = {
   aggregateMetrics,
   clearMetrics,
   estimateTokensFromText,
+  buildTuningHints,
+  buildQualityHints,
 };
