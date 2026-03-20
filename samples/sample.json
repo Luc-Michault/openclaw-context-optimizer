@@ -1,0 +1,9 @@
+{
+  "name": "optimizer",
+  "items": [1, 2, 3],
+  "meta": {
+    "owner": null,
+    "description": "This is a deliberately long description used to trigger the long string anomaly detector in the MVP summary output because compactness matters.",
+    "tags": []
+  }
+}

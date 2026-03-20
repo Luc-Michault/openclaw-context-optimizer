@@ -1,0 +1,5 @@
+name,score,status
+alice,10,ok
+bob,12,ok
+carol,,retry
+dan,999,ok,extra

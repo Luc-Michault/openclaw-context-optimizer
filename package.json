@@ -1,0 +1,23 @@
+{
+  "name": "context-optimizer-toolkit",
+  "version": "0.1.0",
+  "description": "Compact deterministic CLI summaries for files, logs, JSON, CSV, and directory trees.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "context-optimizer": "bin/context-optimizer.js"
+  },
+  "scripts": {
+    "smoke": "node scripts/smoke-test.js",
+    "demo": "node scripts/demo.js"
+  },
+  "keywords": [
+    "cli",
+    "context",
+    "optimizer",
+    "summarization",
+    "logs",
+    "json",
+    "csv"
+  ]
+}

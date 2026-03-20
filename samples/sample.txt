@@ -1,0 +1,9 @@
+alpha
+beta
+beta
+beta
+warning: disk almost full
+alpha
+500 internal issue observed
+
+final line
