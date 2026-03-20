@@ -71,6 +71,23 @@ test('smart-tree adds project hints', () => {
   assert.ok(Array.isArray(result.triageHints.readNextSecondary));
   assert.ok(result.triageHints.triageGroups && Array.isArray(result.triageHints.triageGroups.startHere));
   assert.ok(result.triageHints.triageGroups.startHere.length >= 1);
+  assert.ok(Array.isArray(result.triageHints.triageGroups.generated));
+  assert.ok(Array.isArray(result.triageHints.triageGroups.other));
+  assert.ok(result.triageHints.readNextContext && Array.isArray(result.triageHints.readNextContext.openFirst));
+});
+
+test('smart-tree readNext orders AGENTS then package.json then README', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'co-order-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}\n', 'utf8');
+  fs.writeFileSync(path.join(dir, 'README.md'), '# x\n', 'utf8');
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'be nice\n', 'utf8');
+  const result = smartTree(dir, { preset: 'triage' });
+  const paths = result.triageHints.readNext.map((r) => r.path);
+  const iA = paths.indexOf('AGENTS.md');
+  const iP = paths.indexOf('package.json');
+  const iR = paths.indexOf('README.md');
+  assert.ok(iA >= 0 && iP >= 0 && iR >= 0);
+  assert.ok(iA < iP && iP < iR);
 });
 
 test('smart-read exposes markdown depth summary', () => {

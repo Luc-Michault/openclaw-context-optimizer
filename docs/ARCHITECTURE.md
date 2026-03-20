@@ -15,6 +15,7 @@ The project is now an **OpenClaw-first triage layer** with four cooperating part
 bin/context-optimizer.js
         |
         +-- src/budget.js       (presets + CLI budget overrides)
+        +-- src/repo-context.js (phased gatherRepoContext for policy + smart-tree)
         +-- src/policy.js       (advise / shouldReduce / recommendedReducer / recommendedPreset)
         +-- src/metrics.js      (JSONL metrics + dashboard + aggregateMetrics)
         +-- src/csv-parse.js    (RFC 4180–style CSV)
@@ -59,7 +60,7 @@ Current actions are:
 - `reduce`
 - `rtk-shell`
 
-`advise` returns **repoContext** (markers, stacks, **inferences**), **pathRoles**, **confidenceScore** (0–100) + label, **alternatives[]**, and **worthReadingExactly** — deterministic, no network. Internal flow: **`buildAdviseContext`** → branch (shell / directory / file) → decision.
+`advise` returns **repoContext** (markers, stacks, **inferences**), **pathRoles**, **confidenceScore** (0–100) + label, **alternatives[]**, **worthReadingExactly**, and **worthReadingExactlyReasons[]** — deterministic, no network. Internal flow: **`buildAdviseContext`** (classify + signals) → **`adviseShellStream` / `adviseDirectory` / `adviseFile`** (score + action).
 
 This keeps agent behavior inspectable and debuggable.
 
@@ -76,8 +77,8 @@ Reducers attach:
 ### 3. Scoped, deterministic reducers
 
 Reducers stay intentionally narrow and bounded:
-- `smart-tree`: **`readNext`** / **`readNextSecondary`**, **`triageGroups`** (intent buckets), **`repoProfile`** (+ policy inferences), `stackSignals`, **`whyThisMatters`**
-- `smart-read`: markdown **outline** (heading counts + top sections), **documentShape** hints, todo summary, section-level **readNextHints**
+- `smart-tree`: **`readNext`** / **`readNextSecondary`** / **`readNextContext`**, **`triageGroups`** (incl. generated/other), **`repoProfile`** (+ policy inferences), `stackSignals`, **`whyThisMatters`**
+- `smart-read`: markdown **outline**, **documentShape**, **readNextHints** (priority sections, markers+headings, checklist, YAML/TOML/.env sketches)
 - `smart-json`: structure + merged issue/operational hint pass, bounded large-array handling
 - `smart-log`: anomaly grouping + first/last anomaly summary
 

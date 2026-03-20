@@ -32,7 +32,33 @@ OpenClaw already has strong primitives:
 
 By default the plugin only loads configuration and optionally logs bootstrap lines when `verbose` is true.
 
-**Opt-in:** set `suggestOnLargeRead: true` for a narrow `before_tool_call` hook. For read-like tools (default `read`), files **≥ `maxFileBytes`** trigger **`emitLargeReadSuggestion`**: structured object (**`schemaVersion`**, same fields as **`advise`** incl. **`confidenceScore`**), optional **`onSuggestion(suggestion, { toolName, params })`** when the plugin is registered **in code** (not from JSON), and **`renderSuggestionLogLine`** unless **`logSuggestions: false`**. No tool rewriting. **`matchers`**: path substring; **`extensions`**: allowlist when set. Use **`require('./suggest')`** for the API without the hook.
+**Opt-in:** set `suggestOnLargeRead: true` for a narrow `before_tool_call` hook. For read-like tools (default `read`), files **≥ `maxFileBytes`** trigger **`emitLargeReadSuggestion`**: structured object (**`schemaVersion` `0.9.0`**, same fields as **`advise`** incl. **`confidenceScore`**, **`worthReadingExactlyReasons`**), optional **`onSuggestion(suggestion, { toolName, params })`** when the plugin is registered **in code** (not from JSON), and **`renderSuggestionLogLine`** unless **`logSuggestions: false`** or **`silent: true`**. No tool rewriting. **`matchers`**: path substring; **`extensions`**: allowlist when set. **`suggestDryRunVerbose: true`**: logs a JSON **`traceLargeReadSuggestion`** line on each candidate read (filter gate + advise summary). Use **`require('./suggest')`** for **`buildLargeReadSuggestion`**, **`traceLargeReadSuggestion`**, **`emitLargeReadSuggestion`** without the hook.
+
+### Example: `onSuggestion` (register plugin in JS)
+
+Use the callback to record metrics, enqueue a follow-up tool, or surface UI — do not assume `console` is the right sink:
+
+```javascript
+const { buildLargeReadSuggestion, emitLargeReadSuggestion } = require('./suggest');
+
+const pluginConfig = {
+  suggestOnLargeRead: true,
+  maxFileBytes: 2 * 1024 * 1024,
+  logSuggestions: false,
+  onSuggestion(suggestion, eventMeta) {
+    // suggestion.action, suggestion.recommendedCli, suggestion.worthReadingExactlyReasons, …
+    // eventMeta.toolName, eventMeta.params (original read call)
+    myTelemetry.emit('large_read_hint', { path: suggestion.path, action: suggestion.action });
+  },
+};
+
+const s = buildLargeReadSuggestion('/abs/huge.log', 9_000_000, pluginConfig);
+emitLargeReadSuggestion(pluginConfig, s, { toolName: 'read', params: { path: '/abs/huge.log' } });
+```
+
+**Matchers:** plain substring still works. Patterns with `*` use a light glob: `**/*.log` matches any path ending in `.log`; `**/dist/` matches paths containing `dist/`. For full control, combine with **`extensions`**.
+
+**Agent hint string:** `formatSuggestionForAgent(suggestion)` returns a short multi-line block (action, CLI, why, read-exactly reasons) suitable for injecting into a side channel or transcript comment.
 
 Use the **CLI** or **`require()`** the library for real reductions. Agent workflow is also described in [SKILL.md](./SKILL.md). See [RTK coexistence](../docs/RTK_COMPAT.md).
 

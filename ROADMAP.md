@@ -1,5 +1,15 @@
 # Roadmap
 
+## v0.9 shipped (natural-reflex polish)
+
+- [x] **smart-tree v4** — tighter **readNext** ordering, **readNextContext**, **triageGroups** `generated` / `other`, clearer **whyThisMatters**
+- [x] **Policy v4** — named branches, documented score weights, **`worthReadingExactlyReasons`**, **`repo-context`** module (phased **gatherRepoContext**)
+- [x] **Plugin** — suggestion **`0.9.0`**, **`silent`**, **`traceLargeReadSuggestion`**, **`suggestDryRunVerbose`**, **`formatSuggestionForAgent`**, light glob **`matchers`**
+- [x] **smart-read** — **priority read** section ordering, TODO+heading hints, first unchecked checklist, **YAML/TOML/.env** sketches, stricter **normative-language**
+- [x] **Metrics** — richer **`qualityHints`** (high/low command ratio, aggressive-on-tiny-input)
+- [x] **Tests** — **test/fixtures** mini repos + **v0.9-integration** reasoning checks
+- [x] **Docs** — README v0.9, SKILL anti-patterns, openclaw README consumer examples
+
 ## v0.8 shipped (runtime-ready suggestions + policy phases)
 
 - [x] **Plugin contract** — `schemaVersion`, stable `LARGE_READ_SUGGESTION_KEYS`, `renderSuggestionLogLine` vs `buildLargeReadSuggestion`, `emitLargeReadSuggestion` + optional **`onSuggestion`** (programmatic config), `logSuggestions: false` for callback-only

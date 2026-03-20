@@ -70,6 +70,26 @@ test('advise exec hint is rtk-shell', () => {
   const a = advise({ path: '/tmp/x.log', sizeBytes: 9_000_000, commandHint: 'exec' });
   assert.strictEqual(a.action, 'rtk-shell');
   assert.strictEqual(a.shouldReduce, false);
+  assert.ok(Array.isArray(a.worthReadingExactlyReasons));
+});
+
+test('advise small package.json includes worthReadingExactlyReasons', () => {
+  const a = advise({
+    path: path.join(__dirname, '..', 'package.json'),
+    sizeBytes: 400,
+    extension: 'json',
+  });
+  assert.strictEqual(a.action, 'raw-read');
+  assert.ok(Array.isArray(a.worthReadingExactlyReasons) && a.worthReadingExactlyReasons.length >= 1);
+});
+
+test('explainPolicyDecision lists worthReadingExactlyReasons when present', () => {
+  const s = explainPolicyDecision({
+    path: path.join(__dirname, '..', 'package.json'),
+    sizeBytes: 400,
+    extension: 'json',
+  });
+  assert.ok(s.includes('worth reading exactly (why):'));
 });
 
 test('classifyPathRoles tags readme and locks', () => {

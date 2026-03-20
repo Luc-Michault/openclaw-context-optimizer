@@ -4,9 +4,11 @@ const path = require('path');
 const {
   passesLargeReadFilters,
   buildLargeReadSuggestion,
+  formatSuggestionForAgent,
   formatSuggestionLogLine,
   renderSuggestionLogLine,
   emitLargeReadSuggestion,
+  traceLargeReadSuggestion,
   SUGGESTION_CONTRACT_VERSION,
 } = require('../openclaw/suggest');
 
@@ -25,6 +27,20 @@ test('passesLargeReadFilters respects extension allowlist', () => {
   assert.strictEqual(r.skipReason, 'extension-filter');
 });
 
+test('passesLargeReadFilters glob matchers **/*.log', () => {
+  const ok = passesLargeReadFilters('/var/log/nested/app.log', 9_000_000, {
+    maxFileBytes: 1024,
+    matchers: ['**/*.log'],
+  });
+  assert.strictEqual(ok.ok, true);
+  const miss = passesLargeReadFilters('/var/log/nested/app.txt', 9_000_000, {
+    maxFileBytes: 1024,
+    matchers: ['**/*.log'],
+  });
+  assert.strictEqual(miss.ok, false);
+  assert.strictEqual(miss.skipReason, 'matcher-miss');
+});
+
 test('buildLargeReadSuggestion returns structured fields', () => {
   const suggestion = buildLargeReadSuggestion(path.join(__dirname, '..', 'package.json'), 9_000_000, {
     maxFileBytes: 1024,
@@ -38,6 +54,8 @@ test('buildLargeReadSuggestion returns structured fields', () => {
   assert.ok(suggestion.logLine.includes('openclaw-context-optimizer'));
   assert.ok(formatSuggestionLogLine(suggestion).includes('→'));
   assert.strictEqual(renderSuggestionLogLine(suggestion), suggestion.logLine);
+  assert.ok(Array.isArray(suggestion.worthReadingExactlyReasons));
+  assert.ok(formatSuggestionForAgent(suggestion).includes(suggestion.action));
 });
 
 test('emitLargeReadSuggestion invokes onSuggestion and can silence logs', () => {
@@ -58,4 +76,18 @@ test('emitLargeReadSuggestion invokes onSuggestion and can silence logs', () => 
   );
   assert.strictEqual(seen.length, 1);
   assert.strictEqual(seen[0].meta.toolName, 'read');
+});
+
+test('traceLargeReadSuggestion reports skipReason when below threshold', () => {
+  const tr = traceLargeReadSuggestion('/tmp/x', 500, { maxFileBytes: 9_000_000 });
+  assert.strictEqual(tr.gateOk, false);
+  assert.strictEqual(tr.skipReason, 'below-size-threshold');
+});
+
+test('traceLargeReadSuggestion includes advise when gate passes', () => {
+  const tr = traceLargeReadSuggestion(path.join(__dirname, '..', 'package.json'), 9_000_000, {
+    maxFileBytes: 1024,
+  });
+  assert.strictEqual(tr.gateOk, true);
+  assert.ok(tr.advise && tr.advise.action);
 });

@@ -2,7 +2,7 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
-> **OpenClaw-first, agent-first** (v0.8). Local reduction + repo-aware **`advise`** (with **confidence scores**) before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
+> **OpenClaw-first, agent-first** (v0.9). Local reduction + repo-aware **`advise`** (with **confidence scores** and **`worthReadingExactlyReasons`**) before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
 
 ## Why this exists
 
@@ -98,11 +98,21 @@ JSON reducer output includes `meta.preset`, `meta.presetRequested`, `meta.preset
 
 Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
 
+## What changed in v0.9
+
+- **`src/repo-context.js`** — phased **`gatherRepoContext`** (shared by policy + smart-tree); export **`openclaw-context-optimizer/repo-context`**; pyproject / hatch / uv workspace hints
+- **Policy** — shell / directory / file branches as named functions; documented score weights; **`worthReadingExactlyReasons[]`**; **`explainPolicyDecision`** prints them
+- **smart-tree** — tighter **readNext** ordering (manifests before README); **`readNextContext`**, **`triageGroups.generated` / `other`**, clearer **`whyThisMatters`**
+- **smart-read** — **priority read** headings (install/usage/config…); TODO/FIXME/HACK + nearest heading; first unchecked checklist; **YAML / TOML / .env** structural sketches; stricter **normative-language** (needs 2+ strong lines)
+- **Plugin** — suggestion contract **`0.9.0`**, **`silent`**, **`traceLargeReadSuggestion`**, **`suggestDryRunVerbose`**, **`formatSuggestionForAgent`**, glob-style **`matchers`** (`**/*.log`, …); see [openclaw/README.md](./openclaw/README.md)
+- **Metrics** — **`qualityHints`**: very low global ratio, high-ratio command, efficient command, aggressive-on-small-input
+- **Tests** — **`test/fixtures/`** mini repos + **`test/v0.9-integration.test.js`**
+
 ## What changed in v0.8
 
 - **Plugin API**: versioned suggestion object (`schemaVersion`), **`renderSuggestionLogLine`**, **`emitLargeReadSuggestion`**, optional **`onSuggestion(suggestion, { toolName, params })`** when you register the plugin programmatically; **`logSuggestions: false`** = callback only
 - **Policy**: **`buildAdviseContext`**, **`confidenceScore`**, **`repoContext.inferences`**, expanded **alternatives** (incl. RTK / raw-read cross-hints), clearer **worthReadingExactly** for manifests
-- **`smart-tree`**: **`package.json` `bin` / `module`**, **`triageGroups`** (startHere, buildDeploy, runtimeSource, configTooling, tests, docs), richer **repoProfile**
+- **`smart-tree`**: **`package.json` `bin` / `module`**, **`triageGroups`** (+ generated/other), **`readNextContext`**, richer **repoProfile**
 - **`smart-read`**: **heading `depthSummary`**, stronger config + instruction cues
 - **Metrics**: **`qualityHints`** alongside tuning ratios
 

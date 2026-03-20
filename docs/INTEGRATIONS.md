@@ -9,7 +9,7 @@ The intended OpenClaw flow is now:
 ```bash
 context-optimizer advise .
 context-optimizer smart-tree . --preset=triage
-# then triageHints.triageGroups + readNext / readNextSecondary, then exact reads
+# then triageHints.readNextContext + triageGroups + readNextSecondary, then exact reads
 ```
 
 For file artifacts:

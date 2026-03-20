@@ -1,0 +1,7 @@
+service:
+  name: demo
+database:
+  host: localhost
+  port: 5432
+features:
+  enabled: true

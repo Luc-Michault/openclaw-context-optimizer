@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { gatherRepoContext } = require('./repo-context');
 
 /** Below this (non-log), raw `read` is usually enough. */
 const SMALL_FILE_BYTES = 24 * 1024;
@@ -41,77 +42,6 @@ function isRepoRootish(dir) {
 }
 
 const LOCK_OR_CONFIG = /^(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|\.env\.example)$/i;
-
-function gatherRepoContext(repoRoot) {
-  const empty = { markers: [], stacks: [], openclawAdjacent: false, inferences: [] };
-  if (!repoRoot) return empty;
-  try {
-    if (!fs.existsSync(repoRoot) || !fs.statSync(repoRoot).isDirectory()) return empty;
-  } catch {
-    return empty;
-  }
-  const names = [
-    '.git',
-    'package.json',
-    'package-lock.json',
-    'pnpm-lock.yaml',
-    'yarn.lock',
-    'npm-shrinkwrap.json',
-    'Cargo.toml',
-    'Cargo.lock',
-    'go.mod',
-    'go.sum',
-    'pyproject.toml',
-    'setup.py',
-    'poetry.lock',
-    'README.md',
-    'AGENTS.md',
-    'openclaw.json',
-    'openclaw.plugin.json',
-  ];
-  const markers = names.filter((n) => {
-    try {
-      return fs.existsSync(path.join(repoRoot, n));
-    } catch {
-      return false;
-    }
-  });
-  const stacks = [];
-  if (markers.some((m) => m === 'package.json')) stacks.push('node');
-  if (markers.some((m) => m === 'Cargo.toml')) stacks.push('rust');
-  if (markers.some((m) => m === 'go.mod')) stacks.push('go');
-  if (markers.some((m) => m === 'pyproject.toml' || m === 'setup.py')) stacks.push('python');
-  const openclawAdjacent = markers.some((m) => /openclaw/i.test(m));
-  const inferences = [];
-  if (markers.includes('pnpm-workspace.yaml') || markers.includes('lerna.json') || markers.includes('nx.json')) {
-    inferences.push('layout:workspace-tooling');
-  }
-  if (openclawAdjacent) inferences.push('openclaw:extension-or-config');
-  if (markers.includes('Cargo.toml') && !markers.includes('package.json')) inferences.push('project:rust-primary');
-  if (markers.includes('go.mod') && !markers.includes('package.json')) inferences.push('project:go-primary');
-
-  const pkgPath = path.join(repoRoot, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8').slice(0, 65536));
-      if (pkg && typeof pkg === 'object') {
-        if (pkg.bin) inferences.push('node:declares-bin');
-        if (pkg.private === true) inferences.push('npm:private');
-        if (pkg.private !== true && typeof pkg.name === 'string' && pkg.name) inferences.push('npm:publishable-package');
-        if (!pkg.bin && (pkg.main || pkg.module || pkg.exports)) inferences.push('node:has-entry-fields');
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return {
-    markers: markers.slice().sort((a, b) => a.localeCompare(b)),
-    stacks: stacks.slice().sort((a, b) => a.localeCompare(b)),
-    openclawAdjacent,
-    inferences: inferences.slice().sort((a, b) => a.localeCompare(b)),
-  };
-}
 
 function relFromRepo(filePath, repoRoot) {
   if (!repoRoot || !filePath) return '';
@@ -316,6 +246,18 @@ function scoreToConfidenceLabel(score) {
   return 'low';
 }
 
+/**
+ * Signal weights for `scoreFileReduceDecision` (base 62, cap 98).
+ * | Signal              | Contribution |
+ * |--------------------|--------------|
+ * | size >= HUGE_BYTES | +28          |
+ * | size >= LARGE_TEXT | +18          |
+ * | size > SMALL_FILE  | +10          |
+ * | size >= threshold  | +6           |
+ * | lock:generated     | +8           |
+ * | doc:readme + md    | +5           |
+ * | kind === log       | +5           |
+ */
 function scoreFileReduceDecision({ sizeBytes, threshold, roles, kind, ext }) {
   let score = 62;
   if (sizeBytes >= HUGE_BYTES) score += 28;
@@ -328,6 +270,15 @@ function scoreFileReduceDecision({ sizeBytes, threshold, roles, kind, ext }) {
   return Math.min(98, score);
 }
 
+/**
+ * Signal weights for `scoreRawReadDecision` (base 68, cap 96).
+ * | Signal                    | Contribution |
+ * |---------------------------|--------------|
+ * | size < SMALL_FILE/2       | +22          |
+ * | size < SMALL_FILE         | +12          |
+ * | manifest:node / doc:agents| +8           |
+ * | lock:generated            | +5           |
+ */
 function scoreRawReadDecision({ sizeBytes, roles }) {
   let score = 68;
   if (sizeBytes < SMALL_FILE_BYTES / 2) score += 22;
@@ -384,129 +335,125 @@ function buildAdviseContext(input) {
   };
 }
 
-/**
- * Full decision object for agents and `advise` CLI.
- * @param {{
- *   path?: string;
- *   sizeBytes?: number;
- *   extension?: string;
- *   commandHint?: string;
- *   urgency?: string;
- *   maxFileBytes?: number;
- * }} input
- */
-function advise(input) {
-  const ctx = buildAdviseContext(input);
+function isShellCommandHint(hint) {
+  return hint === 'shell' || hint === 'exec' || hint === 'rtk' || hint === 'pipeline';
+}
+
+/** Phase 3–5: shell / exec stream → RTK (not file reducers). */
+function adviseShellStream(ctx) {
+  const { p, sizeBytes, extension: ext, basename, parentDir, repoRoot, pathRoles: rolesPre, repoContext: ctxRepoPre } = ctx;
+  const why = [];
+  why.push('Intent looks like shell/command output, not a static file payload.');
+  why.push('RTK rewrites exec streams; this package reduces on-disk artifacts.');
+  const score = 91;
+  return {
+    action: 'rtk-shell',
+    confidence: scoreToConfidenceLabel(score),
+    confidenceScore: score,
+    why,
+    recommendedCommand: null,
+    recommendedCli: null,
+    reducerCommand: null,
+    kind: 'shell',
+    preset: null,
+    shouldReduce: false,
+    reduceReason: why.join(' '),
+    nextStepIfInsufficient:
+      'Use RTK-wrapped exec or narrow the command (paths, flags, tail/head). Re-run before sending full output to the model.',
+    path: p || null,
+    isDirectory: false,
+    sizeBytes,
+    extension: ext || null,
+    basename: basename || null,
+    parentDir: parentDir || null,
+    repoRoot,
+    projectNote: null,
+    repoContext: ctxRepoPre,
+    pathRoles: p ? rolesPre : [],
+    alternatives: [
+      { action: 'rtk-shell', note: 'Primary: shape exec stream (RTK) before model sees it' },
+      { action: 'raw-read', note: 'Safe fallback: only if output was saved to a small file and you need exact bytes' },
+      { action: 'reduce', note: 'If you must triage a saved dump, run advise on that file path (not the live pipe)' },
+    ],
+    worthReadingExactly: null,
+    worthReadingExactlyReasons: [],
+  };
+}
+
+/** Phase 3–5: directory → smart-tree triage. */
+function adviseDirectory(ctx) {
+  const { p, basename, parentDir, urgency, repoRoot, projectNote } = ctx;
+  const why = [];
+  const rootish = isRepoRootish(p);
+  why.push('Directories need layout + triage hints before reading files at random.');
+  if (rootish) {
+    why.push('Project root markers present — smart-tree is the default OpenClaw first pass here.');
+  }
+  const rec = { command: 'smart-tree', kind: 'tree' };
+  const preset = recommendedPreset({ kind: 'tree', sizeBytes: 0, urgency });
+  const safe = cliQuote(p);
+  const cmd = `context-optimizer ${rec.command} ${safe} --preset=${preset}`;
+  const ctxGathered = gatherRepoContext(repoRoot);
+  if (ctxGathered.stacks.length) why.push(`Repo stack hints: ${ctxGathered.stacks.join(', ')}.`);
+  if (ctxGathered.inferences && ctxGathered.inferences.length) {
+    why.push(`Repo inferences: ${ctxGathered.inferences.slice(0, 6).join(', ')}.`);
+  }
+  const dirScore = rootish ? 96 : 80;
+  return {
+    action: 'reduce',
+    confidence: scoreToConfidenceLabel(dirScore),
+    confidenceScore: dirScore,
+    why,
+    recommendedCommand: cmd,
+    recommendedCli: cmd,
+    reducerCommand: rec.command,
+    kind: rec.kind,
+    preset,
+    shouldReduce: true,
+    reduceReason: why.join(' '),
+    nextStepIfInsufficient:
+      'Use triageHints.readNext, triageGroups, readNextSecondary, and recentlyTouched; exact-read 3–7 paths.',
+    path: p,
+    isDirectory: true,
+    sizeBytes: 0,
+    extension: null,
+    basename: basename || null,
+    parentDir: parentDir || null,
+    repoRoot,
+    projectNote,
+    repoContext: ctxGathered,
+    pathRoles: classifyPathRoles(p, repoRoot),
+    alternatives: [
+      { action: 'reduce', recommendedCli: cmd, note: 'Primary: bounded tree + ranked read lists' },
+      { action: 'raw-read', note: 'Never substitute a whole directory blob — pick paths from triage output' },
+      { action: 'rtk-shell', note: 'If you only need `ls`/`find` style discovery, RTK-shaped exec can complement tree' },
+    ],
+    worthReadingExactly:
+      'After smart-tree, exact-read only paths in readNext / triageGroups — not the entire tree listing.',
+    worthReadingExactlyReasons: [
+      'readNext orders manifests and agent docs before generic source files',
+      'Tree text is for orientation; file reads should follow triage paths',
+    ],
+  };
+}
+
+const NEXT_IF_REDUCER_INSUFFICIENT =
+  'Open the exact file/lines the reducer highlighted (anomalies, readNext, section map) with a targeted read.';
+
+/** Phase 3–5: file path → raw read vs reducer. */
+function adviseFile(ctx, input) {
   const {
     p,
     sizeBytes,
     extension: ext,
     basename,
     parentDir,
-    hint,
     urgency,
     threshold,
     repoRoot,
-    isDirectory,
     projectNote,
-    pathRoles: rolesPre,
-    repoContext: ctxRepoPre,
   } = ctx;
-
   const why = [];
-  const nextStepIfInsufficientDefault =
-    'Open the exact file/lines the reducer highlighted (anomalies, readNext, section map) with a targeted read.';
-
-  /* Phase: shell / exec → RTK (not file reducers) */
-  if (hint === 'shell' || hint === 'exec' || hint === 'rtk' || hint === 'pipeline') {
-    why.push('Intent looks like shell/command output, not a static file payload.');
-    why.push('RTK rewrites exec streams; this package reduces on-disk artifacts.');
-    const score = 91;
-    return {
-      action: 'rtk-shell',
-      confidence: scoreToConfidenceLabel(score),
-      confidenceScore: score,
-      why,
-      recommendedCommand: null,
-      recommendedCli: null,
-      reducerCommand: null,
-      kind: 'shell',
-      preset: null,
-      shouldReduce: false,
-      reduceReason: why.join(' '),
-      nextStepIfInsufficient:
-        'Use RTK-wrapped exec or narrow the command (paths, flags, tail/head). Re-run before sending full output to the model.',
-      path: p || null,
-      isDirectory: false,
-      sizeBytes,
-      extension: ext || null,
-      basename: basename || null,
-      parentDir: parentDir || null,
-      repoRoot,
-      projectNote: null,
-      repoContext: ctxRepoPre,
-      pathRoles: p ? rolesPre : [],
-      alternatives: [
-        { action: 'rtk-shell', note: 'Primary: shape exec stream (RTK) before model sees it' },
-        { action: 'raw-read', note: 'Only if output was saved to a small file and you need exact bytes' },
-        { action: 'reduce', note: 'If you must triage a saved dump, advise that file path (not the live pipe)' },
-      ],
-      worthReadingExactly: null,
-    };
-  }
-
-  /* Phase: directory → tree triage */
-  if (isDirectory) {
-    const rootish = isRepoRootish(p);
-    why.push('Directories need layout + triage hints before reading files at random.');
-    if (rootish) {
-      why.push('Project root markers present — smart-tree is the default OpenClaw first pass here.');
-    }
-    const rec = { command: 'smart-tree', kind: 'tree' };
-    const preset = recommendedPreset({ kind: 'tree', sizeBytes: 0, urgency });
-    const safe = cliQuote(p);
-    const cmd = `context-optimizer ${rec.command} ${safe} --preset=${preset}`;
-    const ctxGathered = gatherRepoContext(repoRoot);
-    if (ctxGathered.stacks.length) why.push(`Repo stack hints: ${ctxGathered.stacks.join(', ')}.`);
-    if (ctxGathered.inferences && ctxGathered.inferences.length) {
-      why.push(`Repo inferences: ${ctxGathered.inferences.slice(0, 6).join(', ')}.`);
-    }
-    const dirScore = rootish ? 96 : 80;
-    return {
-      action: 'reduce',
-      confidence: scoreToConfidenceLabel(dirScore),
-      confidenceScore: dirScore,
-      why,
-      recommendedCommand: cmd,
-      recommendedCli: cmd,
-      reducerCommand: rec.command,
-      kind: rec.kind,
-      preset,
-      shouldReduce: true,
-      reduceReason: why.join(' '),
-      nextStepIfInsufficient:
-        'Use triageHints.readNext, triageGroups, readNextSecondary, and recentlyTouched; exact-read 3–7 paths.',
-      path: p,
-      isDirectory: true,
-      sizeBytes: 0,
-      extension: null,
-      basename: basename || null,
-      parentDir: parentDir || null,
-      repoRoot,
-      projectNote,
-      repoContext: ctxGathered,
-      pathRoles: classifyPathRoles(p, repoRoot),
-      alternatives: [
-        { action: 'reduce', recommendedCli: cmd, note: 'Primary: bounded tree + ranked read lists' },
-        { action: 'raw-read', note: 'Never substitute a whole directory blob for this — pick files from triage output' },
-        { action: 'rtk-shell', note: 'If you only need `ls`/`find` style discovery, RTK-shaped exec can complement tree' },
-      ],
-      worthReadingExactly:
-        'After smart-tree, exact-read only paths in readNext / triageGroups — not the entire tree listing.',
-    };
-  }
-
-  /* Phase: file → reduce vs raw */
   const reduce = shouldReduce({ path: p, sizeBytes, extension: ext, commandHint: input.commandHint });
   const rec = recommendedReducer({ path: p, extension: ext, mimeHint: input.mimeHint });
   const preset = recommendedPreset({ kind: rec.kind, sizeBytes, urgency });
@@ -524,6 +471,24 @@ function advise(input) {
     if (ctxRepo.openclawAdjacent) why.push('OpenClaw config or extension files nearby — check AGENTS.md / openclaw.json after manifests.');
     const altCmd = `context-optimizer ${rec.command} ${cliQuote(p)} --preset=agent`;
     const rs = scoreRawReadDecision({ sizeBytes, roles });
+    const worthReadingExactly =
+      roles.includes('manifest:node') && sizeBytes < SMALL_FILE_BYTES * 2
+        ? 'Read package.json verbatim for scripts, dependencies, and package metadata before changing npm/yarn/pnpm behavior.'
+        : sizeBytes < SMALL_FILE_BYTES / 2
+          ? 'Whole file is small—safe to load verbatim in one read.'
+          : 'Prefer verbatim read; use smart-read when headings/checklists make scoped reads faster.';
+    const worthReadingExactlyReasons = [];
+    if (roles.includes('manifest:node') && sizeBytes < SMALL_FILE_BYTES * 2) {
+      worthReadingExactlyReasons.push('Scripts and dependency versions need exact text before edits');
+    }
+    if (roles.includes('doc:agents')) worthReadingExactlyReasons.push('Agent constraint text is high-stakes — avoid paraphrase loss');
+    if (roles.includes('lock:generated') && sizeBytes < SMALL_FILE_BYTES) {
+      worthReadingExactlyReasons.push('Lockfiles encode exact resolved versions for reproducibility');
+    }
+    if (sizeBytes < SMALL_FILE_BYTES / 2) worthReadingExactlyReasons.push('File size is small enough for one verbatim read');
+    if (!worthReadingExactlyReasons.length) {
+      worthReadingExactlyReasons.push('Summaries can drop qualifiers; verbatim read when patch or compliance needs exact text');
+    }
     return {
       action: 'raw-read',
       confidence: scoreToConfidenceLabel(rs),
@@ -550,15 +515,11 @@ function advise(input) {
       pathRoles: roles,
       alternatives: [
         { action: 'raw-read', recommendedCommand: cmd, note: 'Primary: verbatim read fits context' },
-        { action: 'reduce', recommendedCli: altCmd, note: 'If structure/triage would speed understanding' },
-        { action: 'rtk-shell', note: 'If this path is actually shell output mis-saved, reshape at exec with RTK' },
+        { action: 'reduce', recommendedCli: altCmd, note: 'Safe fallback: structure/triage when the file is noisier than expected' },
+        { action: 'rtk-shell', note: 'If this path is shell output mis-saved, reshape at exec with RTK instead' },
       ],
-      worthReadingExactly:
-        roles.includes('manifest:node') && sizeBytes < SMALL_FILE_BYTES * 2
-          ? 'Read package.json verbatim for scripts, dependencies, and package metadata before changing npm/yarn/pnpm behavior.'
-          : sizeBytes < SMALL_FILE_BYTES / 2
-            ? 'Whole file is small—safe to load verbatim in one read.'
-            : 'Prefer verbatim read; use smart-read when headings/checklists make scoped reads faster.',
+      worthReadingExactly,
+      worthReadingExactlyReasons,
     };
   }
 
@@ -578,6 +539,18 @@ function advise(input) {
 
   const safe = cliQuote(p);
   const cmd = `context-optimizer ${rec.command} ${safe} --preset=${preset}`;
+  const worthReadingExactly =
+    rec.kind === 'json'
+      ? 'After smart-json, exact-read only the object keys or array slices you will edit.'
+      : rec.kind === 'log'
+        ? 'After smart-log, exact-read around anomaly line numbers from the summary.'
+        : 'After smart-read, exact-read headings or line ranges the section map highlights.';
+  const worthReadingExactlyReasons =
+    rec.kind === 'json'
+      ? ['JSON patches need precise key paths and values the sketch may abbreviate']
+      : rec.kind === 'log'
+        ? ['Stack traces and line numbers must match the real file for debugging']
+        : ['Section titles and bullet boundaries are easy to mis-summarize in long prose'];
   return {
     action: 'reduce',
     confidence: scoreToConfidenceLabel(reduceScore),
@@ -590,7 +563,7 @@ function advise(input) {
     preset,
     shouldReduce: true,
     reduceReason: reduce.reason,
-    nextStepIfInsufficient: nextStepIfInsufficientDefault,
+    nextStepIfInsufficient: NEXT_IF_REDUCER_INSUFFICIENT,
     path: p,
     isDirectory: false,
     sizeBytes,
@@ -603,16 +576,32 @@ function advise(input) {
     pathRoles: roles,
     alternatives: [
       { action: 'reduce', recommendedCli: cmd, note: 'Primary: bounded reducer for this artifact type' },
-      { action: 'raw-read', note: 'If you need every line for a patch, narrow to line range after reducer cues' },
+      { action: 'raw-read', note: 'If exact syntax matters for a patch, narrow to line range after reducer cues' },
       { action: 'rtk-shell', note: 'If content is from exec, fix upstream with RTK instead of smart-log on a stale file' },
     ],
-    worthReadingExactly:
-      rec.kind === 'json'
-        ? 'After smart-json, exact-read only the object keys or array slices you will edit.'
-        : rec.kind === 'log'
-          ? 'After smart-log, exact-read around anomaly line numbers from the summary.'
-          : 'After smart-read, exact-read headings or line ranges the section map highlights.',
+    worthReadingExactly,
+    worthReadingExactlyReasons,
   };
+}
+
+/**
+ * Full decision object for agents and `advise` CLI.
+ * Phases: (1) classify input in `buildAdviseContext`, (2) gather signals there,
+ * (3–5) score + choose action in branch helpers below.
+ * @param {{
+ *   path?: string;
+ *   sizeBytes?: number;
+ *   extension?: string;
+ *   commandHint?: string;
+ *   urgency?: string;
+ *   maxFileBytes?: number;
+ * }} input
+ */
+function advise(input) {
+  const ctx = buildAdviseContext(input);
+  if (isShellCommandHint(ctx.hint)) return adviseShellStream(ctx);
+  if (ctx.isDirectory) return adviseDirectory(ctx);
+  return adviseFile(ctx, input);
 }
 
 /**
@@ -645,6 +634,10 @@ function explainPolicyDecision(input) {
     }
   }
   if (a.worthReadingExactly) lines.push(`worth reading exactly: ${a.worthReadingExactly}`);
+  if (a.worthReadingExactlyReasons && a.worthReadingExactlyReasons.length) {
+    lines.push('worth reading exactly (why):');
+    for (const r of a.worthReadingExactlyReasons) lines.push(`  - ${r}`);
+  }
   lines.push(a.recommendedCommand ? `next: ${a.recommendedCommand}` : 'next: (see rtk-shell guidance)');
   lines.push(`if insufficient: ${a.nextStepIfInsufficient}`);
   return lines.join('\n');

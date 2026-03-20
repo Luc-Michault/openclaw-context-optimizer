@@ -4,7 +4,11 @@
  * Opt-in: suggestOnLargeRead — structured suggestions (openclaw/suggest.js).
  */
 
-const { buildLargeReadSuggestion, emitLargeReadSuggestion } = require('./suggest');
+const {
+  buildLargeReadSuggestion,
+  emitLargeReadSuggestion,
+  traceLargeReadSuggestion,
+} = require('./suggest');
 
 module.exports = function register(api) {
   const cfg = api?.config || {};
@@ -23,11 +27,13 @@ module.exports = function register(api) {
 
   if (verbose) {
     console.log(
-      '[openclaw-context-optimizer] registered defaultPreset=%s maxFileBytes=%s suggestOnLargeRead=%s onSuggestion=%s matchers=%s extensions=%s',
+      '[openclaw-context-optimizer] registered defaultPreset=%s maxFileBytes=%s suggestOnLargeRead=%s onSuggestion=%s silent=%s suggestDryRunVerbose=%s matchers=%s extensions=%s',
       defaultPreset,
       maxFileBytes,
       Boolean(cfg.suggestOnLargeRead),
       typeof cfg.onSuggestion === 'function' ? 'yes' : 'no',
+      cfg.silent === true ? 'yes' : 'no',
+      cfg.suggestDryRunVerbose === true ? 'yes' : 'no',
       Array.isArray(cfg.matchers) ? cfg.matchers.length : 0,
       Array.isArray(cfg.extensions) ? cfg.extensions.join(',') : '(any)',
     );
@@ -57,6 +63,10 @@ module.exports = function register(api) {
         return;
       }
 
+      if (cfg.suggestDryRunVerbose === true && typeof console.info === 'function') {
+        const tr = traceLargeReadSuggestion(resolved, size, cfg);
+        console.info('[openclaw-context-optimizer] suggest trace:', JSON.stringify(tr));
+      }
       const suggestion = buildLargeReadSuggestion(resolved, size, cfg);
       emitLargeReadSuggestion(cfg, suggestion, { toolName: tool, params });
     },

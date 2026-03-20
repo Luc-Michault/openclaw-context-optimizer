@@ -35,7 +35,7 @@ This skill describes how an **OpenClaw agent** should use `openclaw-context-opti
 ## Recommended workflow
 
 1. **Classify** — file vs directory vs “this came from exec” (if exec → RTK).
-2. Run **`context-optimizer advise <path>`** — get `action` (`raw-read` | `reduce` | `rtk-shell`), **`confidence`** + **`confidenceScore`**, `why[]`, `recommendedCli` / `recommendedCommand`, `nextStepIfInsufficient`, plus **`alternatives[]`**, **`worthReadingExactly`**, **`pathRoles`**, **`repoContext`** (incl. **inferences**).
+2. Run **`context-optimizer advise <path>`** — get `action` (`raw-read` | `reduce` | `rtk-shell`), **`confidence`** + **`confidenceScore`**, `why[]`, `recommendedCli` / `recommendedCommand`, `nextStepIfInsufficient`, plus **`alternatives[]`**, **`worthReadingExactly`**, **`worthReadingExactlyReasons[]`**, **`pathRoles`**, **`repoContext`** (incl. **inferences**).
 3. If **`reduce`**, run the suggested command (e.g. `smart-log`, `smart-json`, `smart-tree`) with the suggested **`--preset`**.
 4. **Read the bounded summary** — anomalies, structure, `readNext` / section hints (`markdownOutline` for docs), duplicates, etc.
 5. Only then **`read`** the 3–7 highest-signal paths or line ranges the summary points to.
@@ -59,17 +59,18 @@ Use **`--json`** when another tool must parse the result; use **`--metrics`** wh
 
 ## `smart-tree` triage output
 
-- **`triageHints.readNext`** — primary shortlist `{ path, reason }[]` (AGENTS/README/manifests/**`bin`/`module`/`main`** — deterministic priority).
+- **`triageHints.readNext`** — primary shortlist `{ path, reason }[]` (manifests and agent docs before generic roots — deterministic priority).
+- **`triageHints.readNextContext`** — **`openFirst`** (first ~4 primary paths) vs **`thenReview`** (rest of primary + secondary).
 - **`triageHints.readNextSecondary`** — tooling / license / tsconfig / test-runner configs after the primary pass.
-- **`triageHints.triageGroups`** — same candidates grouped by intent (**startHere**, **buildDeploy**, **runtimeSource**, **configTooling**, **tests**, **docs**).
+- **`triageHints.triageGroups`** — same candidates grouped by intent (**startHere**, **buildDeploy**, **runtimeSource**, **configTooling**, **tests**, **docs**, **generated**, **other**).
 - **`readNextPaths`** / **`readNextSecondaryPaths`** — string copies for quick checks.
 - **`repoProfile`**, **`stackSignals`**, **`whyThisMatters`** — classification + *what to do first* (not just description).
 
 ## `smart-read` on large docs
 
 - **`markdownOutline`** — heading counts, **`depthSummary`** (e.g. `h1:2 h2:5`), top sections with line numbers.
-- **`documentShape`** — e.g. checklist-heavy, procedural doc, config-shaped filename.
-- **`readNextHints`** — concrete “next read § @ line …” suggestions before a full verbatim pull.
+- **`documentShape`** — content signals (checklist-heavy, instruction sections, **normative-language** only when several strong lines match).
+- **`readNextHints`** — **priority read** (install/usage/config-style headings first), **marker:** lines for TODO/FIXME/HACK near headings, **checklist:** first unchecked item, plus YAML/TOML/.env structural sketches for config files.
 
 ---
 
@@ -105,6 +106,18 @@ context-optimizer smart-json ./state.json --preset=schema
 context-optimizer advise ./out.txt --command-hint=exec
 # Expect action rtk-shell — shape the command with RTK, not smart-log on a fake “file”.
 ```
+
+---
+
+## Anti-patterns
+
+- **Ingesting the whole `smart-tree` text** as if it were a file to understand — use **`readNext`** / **`readNextContext.openFirst`**, then exact reads.
+- **Skipping `advise`** and always running a reducer — small manifests and agent docs are often **`raw-read`**; reducers add noise.
+- **Skipping `advise` when the artifact type is unfamiliar** — run it once; it is cheap and sets path roles + repo context.
+- **Using `smart-log` on command output** saved to a file when the real problem is the **exec stream** — use **RTK** and `advise --command-hint=exec`.
+- **Trusting `recentlyTouched` over `readNext`** — hot files are not always the right first read; use mtime as a tie-breaker.
+- **Ignoring `triageGroups.generated`** — lockfiles and build output buckets are there to **downrank** or skip unless you are debugging deps/builds.
+- **Treating compression ratio or token delta as “quality”** — a tiny ratio can mean useless summaries; use **`advise`**, **`readNextHints`**, and your task fit.
 
 ---
 

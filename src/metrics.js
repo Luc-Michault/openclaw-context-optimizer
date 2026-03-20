@@ -242,6 +242,51 @@ function buildQualityHints(avgRatioByPreset, avgRatioByCommand, entries) {
       hints.push('many failed runs — check invalid paths/JSON; poor ratios on failures skew averages');
     }
   }
+  if (entries.length >= 20) {
+    const rs = entries.map((e) => e.ratio).filter((r) => r != null && Number.isFinite(r));
+    if (rs.length >= 15) {
+      const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+      if (mean < 0.12) {
+        hints.push(
+          'overall ratio is very low — run `context-optimizer advise` first; you may be reducing files that are already small enough to read verbatim',
+        );
+      }
+    }
+  }
+  const cmdCounts = {};
+  for (const e of entries) {
+    const c = e.command || '?';
+    cmdCounts[c] = (cmdCounts[c] || 0) + 1;
+  }
+  let highRatioWorst = null;
+  let lowRatioBest = null;
+  for (const [cmd, r] of Object.entries(avgRatioByCommand)) {
+    const n = cmdCounts[cmd] || 0;
+    if (r != null && r > 0.48 && n >= 4 && (!highRatioWorst || r > highRatioWorst.r)) {
+      highRatioWorst = { cmd, r, n };
+    }
+    if (r != null && r < 0.12 && n >= 6 && (!lowRatioBest || r < lowRatioBest.r)) {
+      lowRatioBest = { cmd, r, n };
+    }
+  }
+  if (highRatioWorst) {
+    hints.push(
+      `${highRatioWorst.cmd} avg ratio ~${highRatioWorst.r.toFixed(2)} (${highRatioWorst.n} runs) — summaries are large vs input; try triage/aggressive or smaller targets`,
+    );
+  }
+  if (lowRatioBest && (!highRatioWorst || lowRatioBest.cmd !== highRatioWorst.cmd)) {
+    hints.push(`${lowRatioBest.cmd} is very efficient here (${lowRatioBest.n} runs) — keep using it for similar files`);
+  }
+  if (entries.length >= 8) {
+    const tinyAgg = entries.filter(
+      (e) => e.preset === 'aggressive' && (e.inputTokensEst || 0) > 0 && (e.inputTokensEst || 0) < 8000,
+    );
+    if (tinyAgg.length >= 4) {
+      hints.push(
+        'aggressive preset appears often on small inputs — consider agent/triage unless context is extremely tight',
+      );
+    }
+  }
   return hints;
 }
 

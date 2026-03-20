@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+/**
+ * Library + CLI example for running reducers from OpenClaw-shaped code.
+ *
+ * For large-read **suggestions** (not reductions), use `openclaw/suggest.js`:
+ *
+ *   const { buildLargeReadSuggestion, emitLargeReadSuggestion, formatSuggestionForAgent } = require('./suggest');
+ *   const cfg = { suggestOnLargeRead: true, maxFileBytes: 2e6, logSuggestions: false,
+ *     onSuggestion(s, meta) { appendToTranscript(formatSuggestionForAgent(s)); } };
+ */
 
 const path = require('path');
 const fs = require('fs');
