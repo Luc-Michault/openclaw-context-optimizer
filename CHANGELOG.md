@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. The format is loosely [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.1] — 2026-03-20
+
+### Fixed
+
+- **smart-tree** — `.git/` and `node_modules/` are no longer listed in `entries` (walk skips them entirely).
+- **CLI `advise`** — accepts `--path <path>` or `--path=<path>` in addition to the positional path; clearer error when the path is missing.
+
 ## [1.0.0] — 2026-03-20
 
 ### Stable surface (see [API.md](./API.md))

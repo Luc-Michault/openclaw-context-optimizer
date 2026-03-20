@@ -1252,31 +1252,42 @@ function collectTreeTriage(rootDir, budget) {
   };
 }
 
-function walkTree(dir, depth, state, budget) {
+/** Skip VCS and dependency trees in displayed `entries` (not just readNext). */
+function shouldSkipTreeEntry(rootDir, fullPath) {
+  const relNorm = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+  if (relNorm === '.git' || relNorm.startsWith('.git/')) return true;
+  if (relNorm === 'node_modules' || relNorm.startsWith('node_modules/')) return true;
+  return false;
+}
+
+function walkTree(dir, depth, state, budget, rootDir) {
+  const root = rootDir != null ? rootDir : path.resolve(dir);
   if (depth > budget.maxTreeDepth || state.entries.length >= budget.maxTreeEntries) return state;
   const names = deterministicSort(fs.readdirSync(dir));
   if (depth === 0) state.projectHints = detectProjectHints(names);
   for (const name of names) {
     if (state.entries.length >= budget.maxTreeEntries) break;
     const fullPath = path.join(dir, name);
+    if (shouldSkipTreeEntry(root, fullPath)) continue;
     const stat = fs.statSync(fullPath);
     const relDepth = '  '.repeat(depth);
     state.entries.push(`${relDepth}${stat.isDirectory() ? 'dir ' : 'file'} ${name}`);
-    if (stat.isDirectory()) walkTree(fullPath, depth + 1, state, budget);
+    if (stat.isDirectory()) walkTree(fullPath, depth + 1, state, budget, root);
   }
   return state;
 }
 
 function smartTree(dir, opts = {}) {
   const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
-  const state = walkTree(dir, 0, { entries: [], projectHints: [] }, budget);
-  const triageHints = collectTreeTriage(dir, budget);
+  const resolvedRoot = path.resolve(dir);
+  const state = walkTree(resolvedRoot, 0, { entries: [], projectHints: [] }, budget, resolvedRoot);
+  const triageHints = collectTreeTriage(resolvedRoot, budget);
   const totalDirs = state.entries.filter((line) => line.trim().startsWith('dir ')).length;
   const totalFiles = state.entries.filter((line) => line.trim().startsWith('file ')).length;
   const presetMeta = { presetApplied, presetRequested, presetCoerced };
   return withMeta({
     command: 'smart-tree',
-    target: displayTarget || path.basename(dir),
+    target: displayTarget || path.basename(resolvedRoot),
     stats: {
       listedEntries: state.entries.length,
       directories: totalDirs,

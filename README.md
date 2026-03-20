@@ -51,7 +51,7 @@ context-optimizer smart-csv [options] <file>
 context-optimizer smart-json [options] <file>
 context-optimizer smart-tree [options] <dir>
 context-optimizer metrics [--clear] [--limit=N] [--json]
-context-optimizer advise <file-or-dir> [--urgency=tight] [--command-hint=exec]
+context-optimizer advise <file-or-dir> [--path <path>] [--urgency=tight] [--command-hint=exec]
 ```
 
 ## Presets
@@ -104,6 +104,11 @@ JSON reducer output includes `meta.preset`, `meta.presetRequested`, `meta.preset
 ### Metrics privacy
 
 Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
+
+## What changed in v1.0.1
+
+- **smart-tree** — `.git/` and `node_modules/` are omitted from **`entries`** (not only from readNext)
+- **CLI `advise`** — **`--path`** / **`--path=`** accepted in addition to the positional path
 
 ## What changed in v1.0
 

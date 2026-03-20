@@ -64,6 +64,7 @@ metrics options:
   --json              Print aggregate summary + recent tail as JSON (not terminal dashboard)
 
 advise options:
+  --path=PATH              Target path (alternative to positional argument)
   --urgency=normal|tight   Bias presets toward aggressive/schema
   --command-hint=exec      Mark context as shell output (recommend RTK, not file reducers)
 
@@ -74,6 +75,7 @@ Examples:
   context-optimizer metrics
   context-optimizer metrics --json --limit=2000
   context-optimizer advise ./app.log
+  context-optimizer advise --path ./app.log
 
 Environment:
   CONTEXT_OPTIMIZER_METRICS_SAFE=1   Omit cwd from metrics; truncate error messages`);
@@ -223,8 +225,9 @@ if (command === 'metrics') {
 }
 
 if (command === 'advise') {
-  const adviseTarget = positional[1];
-  if (!adviseTarget) fail('advise requires a path argument');
+  const fromFlag = flags.path != null && flags.path !== true ? String(flags.path) : null;
+  const adviseTarget = positional[1] || fromFlag;
+  if (!adviseTarget) fail('advise requires a path: use "advise <path>" or "advise --path <path>"');
   const advisePath = path.resolve(process.cwd(), adviseTarget);
   if (!fs.existsSync(advisePath)) fail(`path does not exist: ${adviseTarget}`);
   const st = fs.statSync(advisePath);
