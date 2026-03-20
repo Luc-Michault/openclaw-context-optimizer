@@ -1,6 +1,6 @@
 # OpenClaw Integration Notes
 
-This toolkit is most useful in OpenClaw as a **local pre-read reducer**, not as a replacement for native tools.
+`openclaw-context-optimizer` is most useful in OpenClaw as a **local pre-read reducer**, not as a replacement for native tools.
 
 ## Where it fits
 
@@ -43,6 +43,10 @@ OpenClaw already has strong primitives:
 - `agent`: balanced default for everyday OpenClaw work
 - `aggressive`: shortest summaries when context is tight
 - `schema`: more structure budget for JSON/config inspection
+
+## Programmatic wrapper
+
+`openclaw/plugin-example.js` exports `reduceForOpenClaw(command, target, preset)` which calls the **library** by default (no subprocess, no `execFileSync` buffer cap). Set `CONTEXT_OPTIMIZER_USE_CLI=1` when running the example CLI to force a subprocess with `maxBuffer` 16 MiB (adjust in source if needed).
 
 ## Why this is OpenClaw-first
 

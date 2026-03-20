@@ -1,4 +1,4 @@
-# Context Optimizer Toolkit
+# OpenClaw Context Optimizer
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
@@ -71,34 +71,36 @@ CLI flags like `--max-lines`, `--max-depth`, `--json-depth`, and `--budget` stil
 | `--label=NAME` | Override target name in output and metrics |
 | `--tokens` | Append rough token estimates (~bytes/4) |
 | `--metrics` | Append this run to `~/.context-optimizer/metrics.jsonl` |
+| `--strict-preset` | Fail if `--preset` is not a known name (no silent fallback to `balanced`) |
 
-## What changed in v0.3
+JSON output includes `meta.preset`, `meta.presetRequested`, `meta.presetCoerced` so agents see when a typo was corrected.
+
+### Metrics privacy
+
+Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
+
+## What changed in v0.3 / v0.4
 
 ### Agent-oriented metrics
 
-Metrics entries now include fields useful for real agent usage, including:
+Metrics entries include fields useful for real agent usage, including:
 - `durationMs`
-- `preset`
+- `preset` (applied)
 - `budgetSummary`
 - `sourceType` (`file` or `stdin`)
 - `success`
-- `cwd`
-- `projectHint`
+- `cwd` (omitted when `CONTEXT_OPTIMIZER_METRICS_SAFE=1`)
+- `repoKey` (`pkg:name`, `git:folder`, or `dir:basename` — walks up to `package.json` / `.git`)
 
-The `context-optimizer metrics` dashboard now shows:
-- success/failure counts
-- average runtime
-- source mix (file vs stdin)
-- command and preset usage
-- recent run table with preset/source/runtime
+The `context-optimizer metrics` dashboard shows success/failure counts, average runtime, source mix, command/preset usage, and a **repos:** aggregate (falls back to legacy `projectHint` in old JSONL lines).
 
-Still simple, still append-only JSONL.
+Still append-only JSONL.
 
 ### Reducer improvements for agent triage
 
-- `smart-tree` adds lightweight **project hints** (Node project, tests visible, container config, OpenClaw folder, etc.)
-- `smart-read` adds **markdown/config awareness** and sensitive-keyword hints
-- `smart-json` adds **operational hints** (status/error/id fields, arrays of objects, large arrays)
+- `smart-tree` adds lightweight **project hints** (Node project, tests visible, container config, OpenClaw folder, etc.; folder names matched case-insensitively)
+- `smart-read` adds **markdown/config awareness** and **assignment-style** secret hints (`likely-secret-assignment`), not bare word matches
+- `smart-json` merges **anomalies + operational hints** in one bounded walk; large homogeneous object arrays sample keys instead of visiting every element
 - `smart-log` adds first/last anomaly summary in addition to grouped patterns
 
 ## Example philosophy: raw vs compact
@@ -147,7 +149,7 @@ context-optimizer metrics
 - `smartRead`, `smartLog`, `smartCsv`, `smartJson`, `smartTree`
 - `smartReadText`, `smartLogText`, `smartCsvText`, `smartJsonText`
 - `formatOutput(result)`
-- `resolveBudget`, `DEFAULT_BUDGET`, preset metadata
+- `resolveBudget`, `DEFAULT_BUDGET`, `isKnownPreset`, `normalizePresetName`, preset metadata
 
 ## Repository structure
 
@@ -175,6 +177,11 @@ This repo is intended to be open-source ready. The remaining publish-time items 
 - Set your final GitHub repository URL in `package.json`
 - Add screenshots if you want a nicer package page
 - Add real-world fixtures if you want benchmark credibility
+
+## License
+
+MIT
+es if you want benchmark credibility
 
 ## License
 

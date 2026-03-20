@@ -2,6 +2,8 @@
 
 ## OpenClaw
 
+Project/package name: `openclaw-context-optimizer`
+
 Recommended order of operations for repo triage:
 
 ```bash
@@ -42,3 +44,7 @@ context-optimizer metrics
 ```
 
 Optional: `CONTEXT_OPTIMIZER_METRICS_DIR=/path/to/dir` to store `metrics.jsonl` elsewhere.
+
+Use `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to avoid writing full `cwd` and to truncate error text in the log.
+
+For agent scripts that pass `--preset` from an LLM, add `--strict-preset` so unknown names fail loudly instead of falling back to `balanced`.

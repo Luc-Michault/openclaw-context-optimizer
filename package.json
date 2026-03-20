@@ -1,6 +1,6 @@
 {
   "name": "context-optimizer-toolkit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js"
@@ -9,7 +9,8 @@
   "license": "MIT",
   "type": "commonjs",
   "bin": {
-    "context-optimizer": "bin/context-optimizer.js"
+    "context-optimizer": "bin/context-optimizer.js",
+    "openclaw-context-optimizer": "bin/context-optimizer.js"
   },
   "scripts": {
     "smoke": "node scripts/smoke-test.js",
@@ -30,11 +31,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "TODO: set repository URL"
+    "url": "git+https://github.com/YOUR_ORG/context-optimizer-toolkit.git"
   },
-  "homepage": "TODO: set homepage URL",
+  "homepage": "https://github.com/YOUR_ORG/context-optimizer-toolkit#readme",
   "bugs": {
-    "url": "TODO: set issue tracker URL"
+    "url": "https://github.com/YOUR_ORG/context-optimizer-toolkit/issues"
   },
   "engines": {
     "node": ">=18"

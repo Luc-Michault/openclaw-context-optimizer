@@ -1,5 +1,7 @@
 # Architecture
 
+Project/package name: `openclaw-context-optimizer`
+
 ## Overview
 
 The toolkit is a single-process Node.js CLI with deterministic reducers, preset-aware budgets, and append-only JSONL metrics.
@@ -20,7 +22,7 @@ bin/context-optimizer.js
         +-- smartTree(dir)
 ```
 
-## v0.3 direction
+## v0.3 / v0.4 direction
 
 This is an **agent-side reduction layer**.
 
@@ -43,15 +45,20 @@ v0.3 adds agent-friendly presets (`agent`, `triage`, `aggressive`, `schema`) tha
 
 ### Meta in every result
 
-Reducers now attach:
-- `meta.preset`
+Reducers attach:
+- `meta.preset` (applied)
+- `meta.presetRequested` / `meta.presetCoerced` (so typos are visible)
 - `meta.budgetSummary`
 
 That keeps downstream agents and dashboards aware of **how** a summary was produced.
 
+### JSON: structure vs issues
+
+`smart-json` still builds the structural sketch in one walk, then runs a **single merged walk** for `anomalyFirst` + `operationalHints` (shared patterns, bounded array indexing so huge homogeneous arrays do not recurse per element). Stats expose `structureNodesVisited` and `issueNodesVisited` separately.
+
 ### Simple append-only metrics
 
-Metrics stay JSONL and append-only. No database, no migrations, no daemon. The dashboard computes aggregates on read.
+Metrics stay JSONL and append-only. No database, no migrations, no daemon. The dashboard computes aggregates on read. Entries use `repoKey` (package name / git folder / directory label); optional `CONTEXT_OPTIMIZER_METRICS_SAFE=1` strips `cwd` and truncates errors.
 
 ### Scoped triage heuristics
 
