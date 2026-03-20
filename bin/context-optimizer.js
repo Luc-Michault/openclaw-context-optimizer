@@ -19,7 +19,14 @@ Commands:
   smart-log <file>
   smart-csv <file>
   smart-json <file>
-  smart-tree <dir>`);
+  smart-tree <dir>
+
+Examples:
+  context-optimizer smart-read README.md
+  context-optimizer smart-log app.log
+  context-optimizer smart-csv signals.csv
+  context-optimizer smart-json package.json
+  context-optimizer smart-tree src`);
 }
 
 function fail(message) {

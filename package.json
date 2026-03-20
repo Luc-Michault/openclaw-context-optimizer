@@ -18,6 +18,20 @@
     "summarization",
     "logs",
     "json",
-    "csv"
-  ]
+    "csv",
+    "llm",
+    "agents",
+    "token-optimization"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_ORG/context-optimizer-toolkit.git"
+  },
+  "homepage": "https://github.com/YOUR_ORG/context-optimizer-toolkit#readme",
+  "bugs": {
+    "url": "https://github.com/YOUR_ORG/context-optimizer-toolkit/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }

@@ -2,6 +2,8 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
+> Goal: reduce what an LLM or human needs to read while preserving decision-relevant context.
+
 ## Why this exists
 
 Large files are expensive to read in full, annoying to paste into chat, and often full of repetition. The goal of this toolkit is not to perfectly summarize everything. The goal is to preserve **decision-relevant context** while cutting obvious waste:
@@ -31,6 +33,12 @@ npm link
 ```
 
 This exposes a local executable named `context-optimizer`.
+
+## Open-source positioning
+
+This project is designed as a **generic pre-context reduction layer** for agent/tooling workflows.
+It does not try to replace shell wrappers like RTK. Instead, it complements them by focusing on
+**file payloads and structured local artifacts** such as logs, CSV, JSON, text files, and directory trees.
 
 ## Commands
 
@@ -147,6 +155,13 @@ Run the raw-vs-compact demo:
 ```bash
 npm run demo
 ```
+
+## Suggested GitHub polish before publishing
+
+- Replace `YOUR_ORG` placeholders in `package.json`
+- Add screenshots or terminal captures in the README
+- Decide whether the package name should stay `context-optimizer-toolkit` or shorten to `context-optimizer`
+- Add benchmark fixtures from real-world repositories if you want stronger credibility
 
 ## Limitations
 

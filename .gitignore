@@ -1,0 +1,7 @@
+node_modules/
+.npm/
+coverage/
+.DS_Store
+*.log
+*.tmp
+*.swp
