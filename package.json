@@ -1,11 +1,11 @@
 {
-  "name": "context-optimizer-toolkit",
+  "name": "openclaw-context-optimizer",
   "version": "0.4.0",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js"
   },
-  "description": "Deterministic local reducers for agent-first file, log, JSON, CSV, and tree triage.",
+  "description": "OpenClaw-first local reducers for agent file, log, JSON, CSV, and tree triage.",
   "license": "MIT",
   "type": "commonjs",
   "bin": {
@@ -31,11 +31,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_ORG/context-optimizer-toolkit.git"
+    "url": "git+https://github.com/Luc-Michault/openclaw-context-optimizer.git"
   },
-  "homepage": "https://github.com/YOUR_ORG/context-optimizer-toolkit#readme",
+  "homepage": "https://github.com/Luc-Michault/openclaw-context-optimizer#readme",
   "bugs": {
-    "url": "https://github.com/YOUR_ORG/context-optimizer-toolkit/issues"
+    "url": "https://github.com/Luc-Michault/openclaw-context-optimizer/issues"
   },
   "engines": {
     "node": ">=18"
