@@ -20,10 +20,25 @@ function estimateTokensFromText(text) {
   return Math.max(1, Math.ceil(b / 4));
 }
 
+function isMetricsSafeMode() {
+  return process.env.CONTEXT_OPTIMIZER_METRICS_SAFE === '1';
+}
+
+function truncateMetricError(msg, max = 160) {
+  const s = String(msg || '').replace(/\s+/g, ' ').trim();
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1)}…`;
+}
+
 function appendMetric(entry) {
   const dir = metricsDir();
   ensureDir(dir);
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+  const payload = { ts: new Date().toISOString(), ...entry };
+  if (isMetricsSafeMode()) {
+    delete payload.cwd;
+    if (payload.error != null) payload.error = truncateMetricError(payload.error);
+  }
+  const line = JSON.stringify(payload);
   fs.appendFileSync(metricsFile(), `${line}\n`, 'utf8');
 }
 
@@ -71,7 +86,8 @@ function formatDashboard(entries) {
     else fileRuns += 1;
     commands.set(e.command || '?', (commands.get(e.command || '?') || 0) + 1);
     presets.set(e.preset || 'balanced', (presets.get(e.preset || 'balanced') || 0) + 1);
-    if (e.projectHint) projects.set(e.projectHint, (projects.get(e.projectHint) || 0) + 1);
+    const repo = e.repoKey || e.projectHint;
+    if (repo) projects.set(repo, (projects.get(repo) || 0) + 1);
   }
 
   const saved = Math.max(0, inTok - outTok);
@@ -81,16 +97,28 @@ function formatDashboard(entries) {
     ? Math.round(entries.reduce((sum, e) => sum + (e.durationMs || 0), 0) / entries.length)
     : 0;
 
+  const agg = aggregateMetrics(entries);
+  const cmdRatioLine = topAvgRatios(agg.avgRatioByCommand, 4);
+  const presetRatioLine = topAvgRatios(agg.avgRatioByPreset, 4);
+  const wfLine = Object.entries(agg.workflowTagGroups || {})
+    .sort((a, b) => b[1].runs - a[1].runs || String(a[0]).localeCompare(String(b[0])))
+    .slice(0, 3)
+    .map(([t, g]) => `${t}:${g.runs}${g.avgRatio != null ? `@${g.avgRatio.toFixed(2)}` : ''}`)
+    .join('  ');
+
   const last = entries.slice(-12);
   const lines = [
     'context-optimizer — metrics dashboard',
     '──────────────────────────────────────',
     `runs: ${entries.length}  ok: ${okRuns}  failed: ${entries.length - okRuns}  avgMs: ${avgMs}`,
     `tokens: in ${inTok}  out ${outTok}  saved ~${saved}  avg ratio ${avgRatio.toFixed(3)}`,
+    cmdRatioLine ? `avg ratio / command: ${cmdRatioLine}` : 'avg ratio / command: n/a',
+    presetRatioLine ? `avg ratio / preset: ${presetRatioLine}` : 'avg ratio / preset: n/a',
+    wfLine ? `workflowTag: ${wfLine}` : 'workflowTag: none',
     `sources: file ${fileRuns}  stdin ${stdinRuns}`,
     `commands: ${topMap(commands)}`,
     `presets: ${topMap(presets)}`,
-    projects.size ? `projects: ${topMap(projects, 3)}` : 'projects: none',
+    projects.size ? `repos: ${topMap(projects, 3)}` : 'repos: none',
     '',
     'recent runs (newest last):',
     '──────────────────────────────────────',
@@ -129,12 +157,104 @@ function clearMetrics() {
   if (fs.existsSync(f)) fs.unlinkSync(f);
 }
 
+function accumulateRatio(map, key, ratio) {
+  if (ratio == null || !Number.isFinite(ratio)) return;
+  if (!map[key]) map[key] = { sum: 0, n: 0 };
+  map[key].sum += ratio;
+  map[key].n += 1;
+}
+
+function finalizeAvg(map) {
+  const out = {};
+  for (const [k, v] of Object.entries(map)) {
+    out[k] = v.n ? v.sum / v.n : null;
+  }
+  return out;
+}
+
+function topAvgRatios(avgMap, limit = 5) {
+  return Object.entries(avgMap)
+    .filter(([, v]) => v != null && Number.isFinite(v))
+    .sort((a, b) => a[1] - b[1] || String(a[0]).localeCompare(String(b[0])))
+    .slice(0, limit)
+    .map(([k, v]) => `${k}:${Number(v).toFixed(3)}`)
+    .join('  ');
+}
+
+function aggregateMetrics(entries) {
+  const byCommand = {};
+  const byPreset = {};
+  const byRepo = {};
+  const ratioSumsByCommand = {};
+  const ratioSumsByPreset = {};
+  const workflowBuckets = {};
+  let inTok = 0;
+  let outTok = 0;
+  let ok = 0;
+  const savings = [];
+  const inputs = [];
+  for (const e of entries) {
+    inTok += e.inputTokensEst || 0;
+    outTok += e.outputTokensEst || 0;
+    if (e.success !== false) ok += 1;
+    const cmd = e.command || '?';
+    byCommand[cmd] = (byCommand[cmd] || 0) + 1;
+    const pr = e.preset || 'balanced';
+    byPreset[pr] = (byPreset[pr] || 0) + 1;
+    const repo = e.repoKey || e.projectHint || null;
+    if (repo) byRepo[repo] = (byRepo[repo] || 0) + 1;
+    const r = e.ratio;
+    accumulateRatio(ratioSumsByCommand, cmd, r);
+    accumulateRatio(ratioSumsByPreset, pr, r);
+    const wft = e.workflowTag != null && String(e.workflowTag).trim() !== '' ? String(e.workflowTag).trim() : '(no tag)';
+    if (!workflowBuckets[wft]) workflowBuckets[wft] = { runs: 0, ratioSum: 0, ratioN: 0 };
+    workflowBuckets[wft].runs += 1;
+    if (r != null && Number.isFinite(r)) {
+      workflowBuckets[wft].ratioSum += r;
+      workflowBuckets[wft].ratioN += 1;
+    }
+    const saved = (e.inputTokensEst || 0) - (e.outputTokensEst || 0);
+    savings.push({ target: e.target, savedApprox: saved, command: cmd });
+    inputs.push({ target: e.target, inputTokensEst: e.inputTokensEst || 0, command: cmd });
+  }
+  savings.sort((a, b) => b.savedApprox - a.savedApprox || String(a.target).localeCompare(String(b.target)));
+  inputs.sort((a, b) => b.inputTokensEst - a.inputTokensEst || String(a.target).localeCompare(String(b.target)));
+
+  const avgRatioByCommand = finalizeAvg(ratioSumsByCommand);
+  const avgRatioByPreset = finalizeAvg(ratioSumsByPreset);
+  const workflowTagGroups = {};
+  for (const [tag, b] of Object.entries(workflowBuckets)) {
+    workflowTagGroups[tag] = {
+      runs: b.runs,
+      avgRatio: b.ratioN ? b.ratioSum / b.ratioN : null,
+    };
+  }
+
+  return {
+    windowRuns: entries.length,
+    okRuns: ok,
+    failedRuns: entries.length - ok,
+    tokensIn: inTok,
+    tokensOut: outTok,
+    savedApprox: Math.max(0, inTok - outTok),
+    byCommand,
+    byPreset,
+    byRepoKey: byRepo,
+    avgRatioByCommand,
+    avgRatioByPreset,
+    workflowTagGroups,
+    topSavingsApprox: savings.slice(0, 15),
+    topInputsApprox: inputs.slice(0, 15),
+  };
+}
+
 module.exports = {
   metricsDir,
   metricsFile,
   appendMetric,
   loadRecent,
   formatDashboard,
+  aggregateMetrics,
   clearMetrics,
   estimateTokensFromText,
 };

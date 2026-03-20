@@ -11,6 +11,31 @@ OpenClaw already has strong primitives:
 
 `context-optimizer` fits **between raw shell discovery and expensive deep reading**.
 
+## Installing the OpenClaw plugin
+
+1. Copy **the files inside** this package’s `openclaw/` directory into an extension folder, e.g.  
+   `~/.openclaw/extensions/openclaw-context-optimizer/`  
+   so **`index.js`** and **`openclaw.plugin.json`** sit next to each other (same layout as other extensions such as `rtk-rewrite`).
+2. Register it in `~/.openclaw/openclaw.json` under `plugins.entries`, for example:
+
+```json
+"openclaw-context-optimizer": {
+  "enabled": true,
+  "config": {
+    "enabled": true,
+    "verbose": false,
+    "defaultPreset": "agent",
+    "maxFileBytes": 2097152
+  }
+}
+```
+
+By default the plugin only loads configuration and optionally logs bootstrap lines when `verbose` is true.
+
+**Opt-in:** set `suggestOnLargeRead: true` to register a narrow `before_tool_call` hook: for configured read-like tools (default tool name `read`), if the resolved path is a file **≥ `maxFileBytes`**, the plugin logs a one-line **`advise`** summary (action + suggested reducer/preset). No tool calls are rewritten. Use **`matchers`** / **`extensions`** to limit noise.
+
+Use the **CLI** or **`require()`** the library for real reductions. Agent workflow is also described in [SKILL.md](./SKILL.md). See [RTK coexistence](../docs/RTK_COMPAT.md).
+
 ## Rule of thumb
 
 ### Use raw `read` when

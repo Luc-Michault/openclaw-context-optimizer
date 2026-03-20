@@ -4,14 +4,20 @@ Project/package name: `openclaw-context-optimizer`
 
 ## Overview
 
-The toolkit is a single-process Node.js CLI with deterministic reducers, preset-aware budgets, and append-only JSONL metrics.
+The project is now an **OpenClaw-first triage layer** with four cooperating parts:
+
+1. **Reducers** — bounded summaries for files and directories
+2. **Policy** — `advise` / decision helpers for raw-read vs reduce vs RTK-shell
+3. **Metrics** — append-only JSONL + dashboard / aggregate views
+4. **OpenClaw integration** — skill + plugin scaffold / opt-in suggestion hook
 
 ```text
 bin/context-optimizer.js
         |
-        +-- src/budget.js      (presets + CLI budget overrides)
-        +-- src/metrics.js     (JSONL metrics + terminal dashboard)
-        +-- src/csv-parse.js   (RFC 4180–style CSV)
+        +-- src/budget.js       (presets + CLI budget overrides)
+        +-- src/policy.js       (advise / shouldReduce / recommendedReducer / recommendedPreset)
+        +-- src/metrics.js      (JSONL metrics + dashboard + aggregateMetrics)
+        +-- src/csv-parse.js    (RFC 4180–style CSV)
         v
      src/index.js
         |
@@ -20,53 +26,79 @@ bin/context-optimizer.js
         +-- smartCsv(file | text)
         +-- smartJson(file | text)
         +-- smartTree(dir)
+
+openclaw/
+  +-- SKILL.md                  (agent workflow: advise → reducer → exact read)
+  +-- index.js                  (plugin with opt-in suggestOnLargeRead)
+  +-- openclaw.plugin.json      (plugin schema)
+  +-- README.md                 (install + runtime notes)
 ```
 
-## v0.3 / v0.4 direction
+## Product direction
 
-This is an **agent-side reduction layer**.
-
-It is not trying to be:
+This repo is **not** trying to be:
 - a universal prompt middleware
 - a shell wrapper replacement
-- a framework for remote hosted summarization
+- a hosted summarization framework
 
-It is trying to be:
+It **is** trying to be:
 - deterministic
 - local-first
-- cheap to run inside agent workflows
+- cheap to run inside OpenClaw agent workflows
 - good at first-pass triage before exact reads
+- clearly complementary to RTK for shell streams
 
 ## Core choices
 
-### Presets over config sprawl
+### 1. Policy before magic
 
-v0.3 adds agent-friendly presets (`agent`, `triage`, `aggressive`, `schema`) that map onto the existing budget knobs. This keeps the surface area small while giving agents clearer intent.
+The project prefers an explicit decision layer (`advise`) over silent automation.
+Current actions are:
+- `raw-read`
+- `reduce`
+- `rtk-shell`
 
-### Meta in every result
+This keeps agent behavior inspectable and debuggable.
+
+### 2. Presets over config sprawl
+
+Presets (`balanced`, `agent`, `triage`, `aggressive`, `schema`) bundle budget choices into agent-meaningful modes instead of exposing dozens of knobs by default.
 
 Reducers attach:
-- `meta.preset` (applied)
-- `meta.presetRequested` / `meta.presetCoerced` (so typos are visible)
+- `meta.preset`
+- `meta.presetRequested`
+- `meta.presetCoerced`
 - `meta.budgetSummary`
 
-That keeps downstream agents and dashboards aware of **how** a summary was produced.
+### 3. Scoped, deterministic reducers
 
-### JSON: structure vs issues
+Reducers stay intentionally narrow and bounded:
+- `smart-tree`: repo/project triage with `triageHints.readNext`, `readNextPaths`, `stackSignals`, `whyThisMatters`
+- `smart-read`: markdown/config awareness, todo summary, read-next hints
+- `smart-json`: structure + merged issue/operational hint pass, bounded large-array handling
+- `smart-log`: anomaly grouping + first/last anomaly summary
 
-`smart-json` still builds the structural sketch in one walk, then runs a **single merged walk** for `anomalyFirst` + `operationalHints` (shared patterns, bounded array indexing so huge homogeneous arrays do not recurse per element). Stats expose `structureNodesVisited` and `issueNodesVisited` separately.
+### 4. Simple append-only metrics
 
-### Simple append-only metrics
+Metrics remain JSONL and append-only. No DB, no daemon, no migration burden.
+The system computes:
+- dashboard text output
+- aggregate summaries (`aggregateMetrics`)
+- per-command / per-preset ratios
+- workflow tag groupings
 
-Metrics stay JSONL and append-only. No database, no migrations, no daemon. The dashboard computes aggregates on read. Entries use `repoKey` (package name / git folder / directory label); optional `CONTEXT_OPTIMIZER_METRICS_SAFE=1` strips `cwd` and truncates errors.
+Optional privacy mode (`CONTEXT_OPTIMIZER_METRICS_SAFE=1`) strips `cwd` and truncates error text.
 
-### Scoped triage heuristics
+### 5. Safe OpenClaw integration
 
-Reducer improvements stay narrow and deterministic:
-- `smart-tree`: project hints from top-level files/folders
-- `smart-read`: markdown/config awareness
-- `smart-json`: operational hints
-- `smart-log`: anomaly range summary
+The plugin is intentionally **opt-in and non-aggressive**.
+Current v0.6 behavior:
+- passive registration by default
+- optional `suggestOnLargeRead` hook on read-like tools
+- can filter by `readToolNames`, `extensions`, `matchers`
+- does **not** rewrite tool calls automatically
+
+This preserves trust while still making the runtime more useful.
 
 ## Determinism strategy
 
@@ -74,13 +106,16 @@ To keep output stable across runs:
 - directory names and object keys are alphabetically sorted
 - budgets are explicit and fixed unless overridden
 - grouped patterns sort by count then lexicographically
-- formatting is plain text, not terminal-width dependent logic-heavy UI
+- output is plain text or stable JSON, not terminal-width-heavy fancy UI
+- shallow scans are bounded by explicit budgets
 
 ## OpenClaw fit
 
-The intended loop is:
-1. tree or reducer first
-2. exact `read` second
-3. patch only after narrowing scope
+The intended loop is now explicit:
+1. run `advise`
+2. apply the recommended reducer/preset if needed
+3. inspect bounded summary (`readNext`, anomalies, structure, hints)
+4. exact `read` only on the most relevant files/sections
+5. patch or act after scope is narrowed
 
-That is why the project now has an `openclaw/` directory rather than pretending to be runtime-agnostic at the product layer.
+That is what turns the project from a generic reducer toolkit into an actual **OpenClaw capability layer**.

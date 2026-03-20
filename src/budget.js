@@ -62,6 +62,13 @@ function normalizePresetName(name) {
   return PRESET_BUDGETS[key] ? key : DEFAULT_PRESET;
 }
 
+/** True if `name` matches a defined preset key (case-insensitive). */
+function isKnownPreset(name) {
+  if (name == null || String(name).trim() === '') return false;
+  const key = String(name).trim().toLowerCase();
+  return Boolean(PRESET_BUDGETS[key]);
+}
+
 /**
  * @param {Partial<typeof DEFAULT_BUDGET>} [overrides]
  * @param {{ maxLines?: number; maxDepth?: number; jsonDepth?: number; budget?: number; preset?: string }} [cli]
@@ -104,5 +111,6 @@ module.exports = {
   resolveBudget,
   summarizeBudget,
   normalizePresetName,
+  isKnownPreset,
   clampInt,
 };

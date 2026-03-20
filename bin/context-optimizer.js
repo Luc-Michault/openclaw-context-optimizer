@@ -13,16 +13,23 @@ const {
   smartCsvText,
   smartJsonText,
   formatOutput,
-  DEFAULT_PRESET,
 } = require('../src/index');
 const {
   appendMetric,
   loadRecent,
   formatDashboard,
+  aggregateMetrics,
   clearMetrics,
   estimateTokensFromText,
 } = require('../src/metrics');
-const { clampInt, normalizePresetName, summarizeBudget, resolveBudget } = require('../src/budget');
+const {
+  clampInt,
+  normalizePresetName,
+  summarizeBudget,
+  resolveBudget,
+  isKnownPreset,
+  PRESET_BUDGETS,
+} = require('../src/budget');
 
 function usage() {
   console.log(`context-optimizer <command> [options] <path>
@@ -35,6 +42,7 @@ Commands:
   smart-json   JSON structure sketch
   smart-tree   Budgeted directory tree
   metrics      Terminal dashboard + cumulative token estimates (JSONL log)
+  advise       Policy JSON: reduce vs raw read, suggested command + preset
 
 Global options:
   --json              Machine-readable JSON on stdout
@@ -47,16 +55,28 @@ Global options:
   --budget=N          Tree entry budget + JSON node visit budget (coarse knob)
   --stdin             Read file content from stdin (requires --label for display)
   --label=NAME        Display name for target (also used with stdin)
+  --strict-preset     Exit with error if --preset is not a known name (no silent fallback)
+  --workflow-tag=TAG  Stored in metrics JSONL (or CONTEXT_OPTIMIZER_WORKFLOW_TAG)
 
 metrics options:
   --clear             Delete the metrics log
   --limit=N           Max JSONL lines to aggregate (default 500)
+  --json              Print aggregate summary + recent tail as JSON (not terminal dashboard)
+
+advise options:
+  --urgency=normal|tight   Bias presets toward aggressive/schema
+  --command-hint=exec      Mark context as shell output (recommend RTK, not file reducers)
 
 Examples:
   context-optimizer smart-read README.md --preset=agent
   context-optimizer smart-tree . --preset=triage
   cat big.log | context-optimizer smart-log --stdin --label=app.log --preset=aggressive
-  context-optimizer metrics`);
+  context-optimizer metrics
+  context-optimizer metrics --json --limit=2000
+  context-optimizer advise ./app.log
+
+Environment:
+  CONTEXT_OPTIMIZER_METRICS_SAFE=1   Omit cwd from metrics; truncate error messages`);
 }
 
 function fail(message, code = 1) {
@@ -106,14 +126,14 @@ function buildCliBudget(flags) {
   if (flags['max-depth'] != null) cli.maxDepth = clampInt(flags['max-depth'], 0, 64);
   if (flags['json-depth'] != null) cli.jsonDepth = clampInt(flags['json-depth'], 1, 256);
   if (flags.budget != null) cli.budget = clampInt(flags.budget, 10, 100_000);
-  if (flags.preset != null) cli.preset = normalizePresetName(flags.preset);
+  if (flags.preset != null) cli.preset = String(flags.preset).trim();
   return cli;
 }
 
 function buildOpts(flags, labelFromPath) {
   const cli = buildCliBudget(flags);
   const label = flags.label != null ? String(flags.label) : labelFromPath;
-  return { cli, label: label || labelFromPath, preset: cli.preset || DEFAULT_PRESET };
+  return { cli, label: label || labelFromPath };
 }
 
 function runCommand(command, resolved, flags, inputText) {
@@ -134,10 +154,33 @@ function runCommand(command, resolved, flags, inputText) {
   }
 }
 
-function detectProjectHint(resolved) {
+function detectMetricsRepoKey(resolved) {
   if (!resolved) return null;
-  const dir = fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
-  return path.basename(dir);
+  const start = fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+  let dir = path.resolve(start);
+  for (let i = 0; i < 8; i += 1) {
+    const pkgPath = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg && typeof pkg.name === 'string' && pkg.name.trim()) return `pkg:${pkg.name.trim()}`;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (fs.existsSync(path.join(dir, '.git'))) return `git:${path.basename(dir)}`;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return `dir:${path.basename(path.resolve(start))}`;
+}
+
+function workflowTagFrom(flags) {
+  const t = flags['workflow-tag'] != null ? String(flags['workflow-tag']).trim() : '';
+  if (t) return t.slice(0, 120);
+  const e = process.env.CONTEXT_OPTIMIZER_WORKFLOW_TAG;
+  return e && String(e).trim() ? String(e).trim().slice(0, 120) : null;
 }
 
 const argv = process.argv.slice(2);
@@ -160,7 +203,59 @@ if (command === 'metrics') {
     process.exit(0);
   }
   const limit = flags.limit != null ? clampInt(flags.limit, 1, 50_000) : 500;
-  console.log(formatDashboard(loadRecent(limit)));
+  const entries = loadRecent(limit);
+  if (flags.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          limit,
+          summary: aggregateMetrics(entries),
+          recentTail: entries.slice(-30),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    console.log(formatDashboard(entries));
+  }
+  process.exit(0);
+}
+
+if (command === 'advise') {
+  const adviseTarget = positional[1];
+  if (!adviseTarget) fail('advise requires a path argument');
+  const advisePath = path.resolve(process.cwd(), adviseTarget);
+  if (!fs.existsSync(advisePath)) fail(`path does not exist: ${adviseTarget}`);
+  const st = fs.statSync(advisePath);
+  const policy = require('../src/policy');
+  const sizeBytes = st.isFile() ? st.size : 0;
+  const extension = st.isFile() ? path.extname(advisePath).slice(1) : '';
+  const urgency = flags.urgency != null ? String(flags.urgency) : 'normal';
+  const commandHint = flags['command-hint'] != null ? String(flags['command-hint']) : undefined;
+  const advised = policy.advise({
+    path: advisePath,
+    sizeBytes,
+    extension,
+    commandHint,
+    urgency,
+  });
+  const explanation = policy.explainPolicyDecision({
+    path: advisePath,
+    sizeBytes,
+    extension,
+    commandHint,
+    urgency,
+  });
+  const out = {
+    ...advised,
+    explanation,
+    rtkNote:
+      advised.action === 'rtk-shell'
+        ? 'Shell/exec streams: use RTK for stream shaping; this toolkit reduces on-disk files (logs, JSON, trees).'
+        : 'On-disk artifacts: use advise → reducer → bounded summary, then targeted exact reads.',
+  };
+  process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
   process.exit(0);
 }
 
@@ -179,11 +274,19 @@ if (useStdin) {
   if (command === 'smart-tree' && !fs.statSync(resolved).isDirectory()) fail('smart-tree expects a directory');
 }
 
+if (flags['strict-preset'] && flags.preset != null && String(flags.preset).trim() !== '') {
+  const p = String(flags.preset).trim();
+  if (!isKnownPreset(p)) {
+    fail(`unknown preset "${p}" (expected: ${Object.keys(PRESET_BUDGETS).join(', ')})`);
+  }
+}
+
 const wantMetrics = Boolean(flags.metrics) || process.env.CONTEXT_OPTIMIZER_METRICS === '1';
 const wantTokens = Boolean(flags.tokens);
 const asJson = Boolean(flags.json);
-const preset = normalizePresetName(flags.preset);
 const startedAt = Date.now();
+
+const wfTag = workflowTagFrom(flags);
 
 let result;
 let success = false;
@@ -202,12 +305,13 @@ try {
       ratio: null,
       stdin: useStdin,
       sourceType: useStdin ? 'stdin' : 'file',
-      preset,
-      budgetSummary: summarizeBudget(resolveBudget({}, { preset })),
+      preset: normalizePresetName(flags.preset),
+      budgetSummary: summarizeBudget(resolveBudget({}, { preset: normalizePresetName(flags.preset) })),
       durationMs: Date.now() - startedAt,
       success: false,
       cwd: process.cwd(),
-      projectHint: detectProjectHint(resolved),
+      repoKey: detectMetricsRepoKey(resolved),
+      workflowTag: wfTag || undefined,
       error: e.message || String(e),
     });
   }
@@ -270,11 +374,12 @@ if (wantMetrics) {
     ratio: inputBytes > 0 ? outputChars / inputBytes : null,
     stdin: useStdin,
     sourceType: useStdin ? 'stdin' : 'file',
-    preset,
+    preset: result.meta && result.meta.preset,
     budgetSummary: result.meta && result.meta.budgetSummary,
     durationMs: Date.now() - startedAt,
     success,
     cwd: process.cwd(),
-    projectHint: detectProjectHint(resolved),
+    repoKey: detectMetricsRepoKey(resolved),
+    workflowTag: wfTag || undefined,
   });
 }

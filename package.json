@@ -1,9 +1,10 @@
 {
   "name": "openclaw-context-optimizer",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./policy": "./src/policy.js"
   },
   "description": "OpenClaw-first local reducers for agent file, log, JSON, CSV, and tree triage.",
   "license": "MIT",

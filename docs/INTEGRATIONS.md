@@ -4,16 +4,25 @@
 
 Project/package name: `openclaw-context-optimizer`
 
-Recommended order of operations for repo triage:
+The intended OpenClaw flow is now:
 
 ```bash
+context-optimizer advise .
 context-optimizer smart-tree . --preset=triage
-context-optimizer smart-read README.md --preset=agent
-context-optimizer smart-json package.json --preset=schema
-context-optimizer smart-log server.log --preset=aggressive
+# then exact read on triageHints.readNext / readNextPaths
 ```
 
-Then use OpenClaw `read` on only the files/sections that matter.
+For file artifacts:
+
+```bash
+context-optimizer advise app.log
+context-optimizer smart-log app.log --preset=aggressive
+
+context-optimizer advise package-lock.json
+context-optimizer smart-json package-lock.json --preset=schema
+```
+
+Then use native OpenClaw `read` only on the files / sections that matter.
 
 ### Reducers vs raw reads vs shell rewriting
 
@@ -21,9 +30,54 @@ Then use OpenClaw `read` on only the files/sections that matter.
 - **Raw read**: when exact content matters or the file is already small
 - **Shell rewriting / RTK**: when command output, grep pipelines, or repo-wide shell flow needs shaping before the model sees it
 
-### Example stub
+## Policy / `advise`
 
-`openclaw/plugin-example.js` is intentionally tiny. It just shells into the CLI and returns parsed JSON. It demonstrates the likely future seam without adding a plugin framework too early.
+```bash
+context-optimizer advise ./path/to/file-or-dir
+context-optimizer advise big.log --urgency=tight
+context-optimizer advise ./some-output.txt --command-hint=exec
+```
+
+`advise` emits a decision object including:
+- `action` (`raw-read` | `reduce` | `rtk-shell`)
+- `confidence`
+- `why[]`
+- `recommendedCli` / `recommendedCommand`
+- `nextStepIfInsufficient`
+- path/repo hints when available
+
+Use `require('openclaw-context-optimizer/policy')` (or the main package re-exports) to apply the same logic programmatically.
+
+## OpenClaw plugin
+
+See `openclaw/README.md` for install details.
+
+Current plugin behavior:
+- passive registration by default
+- opt-in `suggestOnLargeRead`
+- can filter on `readToolNames`, `extensions`, `matchers`
+- logs a bounded suggestion before large read-like tool calls
+- does **not** rewrite tool calls automatically
+
+### Example helper stub
+
+`openclaw/plugin-example.js` is a small integration seam for local experiments. It demonstrates reducer access from OpenClaw-shaped code without committing to aggressive runtime behavior.
+
+## Metrics
+
+```bash
+export CONTEXT_OPTIMIZER_METRICS=1
+context-optimizer smart-log ./big.log --preset=agent --json
+context-optimizer metrics
+context-optimizer metrics --json
+```
+
+Optional:
+- `CONTEXT_OPTIMIZER_METRICS_DIR=/path/to/dir` to store `metrics.jsonl` elsewhere
+- `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to avoid writing full `cwd` and to truncate error text
+- `CONTEXT_OPTIMIZER_WORKFLOW_TAG=my-flow` to group runs by workflow
+
+For agent scripts that pass `--preset` from an LLM, add `--strict-preset` so unknown names fail loudly instead of falling back to `balanced`.
 
 ## Generic shell usage
 
@@ -35,16 +89,6 @@ context-optimizer smart-json package.json
 context-optimizer smart-tree src
 ```
 
-## Metrics
+## RTK
 
-```bash
-export CONTEXT_OPTIMIZER_METRICS=1
-context-optimizer smart-log ./big.log --preset=agent --json
-context-optimizer metrics
-```
-
-Optional: `CONTEXT_OPTIMIZER_METRICS_DIR=/path/to/dir` to store `metrics.jsonl` elsewhere.
-
-Use `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to avoid writing full `cwd` and to truncate error text in the log.
-
-For agent scripts that pass `--preset` from an LLM, add `--strict-preset` so unknown names fail loudly instead of falling back to `balanced`.
+See [RTK_COMPAT.md](./RTK_COMPAT.md) for how this toolkit relates to RTK-wrapped `exec`.

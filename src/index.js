@@ -6,6 +6,7 @@ const {
   PRESET_BUDGETS,
   DEFAULT_PRESET,
   normalizePresetName,
+  isKnownPreset,
   summarizeBudget,
 } = require('./budget');
 const { parseCsvText } = require('./csv-parse');
@@ -99,6 +100,50 @@ function detectMarkdownSignals(text, lines) {
   return signals;
 }
 
+function detectMarkdownSectionMap(lines, maxSections) {
+  const cap = maxSections || 20;
+  const sections = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (m) {
+      sections.push({
+        line: i + 1,
+        level: m[1].length,
+        title: truncate(m[2].trim(), 80),
+      });
+      if (sections.length >= cap) break;
+    }
+  }
+  return sections;
+}
+
+function detectTodoMarkers(lines) {
+  const keys = ['TODO', 'FIXME', 'NOTE', 'HACK'];
+  const counts = { TODO: 0, FIXME: 0, NOTE: 0, HACK: 0 };
+  for (const line of lines) {
+    for (const k of keys) {
+      if (new RegExp(`\\b${k}\\b`, 'i').test(line)) counts[k] += 1;
+    }
+  }
+  const parts = keys.filter((k) => counts[k] > 0).map((k) => `${k}=${counts[k]}`);
+  return parts.length ? parts.join(', ') : null;
+}
+
+function lineLooksLikeSecretAssignment(line) {
+  const t = line.trim();
+  if (!t || t.startsWith('#')) return false;
+  if (/^\s*["']?(?:api[_-]?key|client_secret|access_token|refresh_token|auth_?token|private_key)["']?\s*:/i.test(line)) {
+    return true;
+  }
+  if (
+    /^\s*(?:export\s+)?[A-Z0-9_]*(?:API|SECRET|TOKEN|PASSWORD|AUTH|KEY)[A-Z0-9_]*\s*=/i.test(t) &&
+    /(?:API|SECRET|TOKEN|PASSWORD|AUTH|KEY)/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function detectConfigSignals(text, displayTarget) {
   const name = String(displayTarget || '').toLowerCase();
   const signals = [];
@@ -106,31 +151,51 @@ function detectConfigSignals(text, displayTarget) {
   if (/(^|[./])dockerfile$/.test(name) || /docker-compose/.test(name)) signals.push('container-config');
   if (/\.(ya?ml)$/.test(name)) signals.push('yaml-config');
   if (/\.(env|ini|toml|conf|cfg)$/.test(name) || /(^|[./])\.env/.test(name)) signals.push('runtime-config');
-  if (/\b(api[_-]?key|secret|token|password)\b/i.test(text)) signals.push('contains-sensitive-keywords');
+  const lines = text.split('\n');
+  if (lines.some((line) => lineLooksLikeSecretAssignment(line))) signals.push('likely-secret-assignment');
   return signals;
 }
 
 function normalizeOpts(opts = {}) {
-  const preset = normalizePresetName(opts.preset || (opts.cli || {}).preset);
-  const budget = resolveBudget(opts.budget || {}, { ...(opts.cli || {}), preset });
-  return { budget, displayTarget: opts.label, preset };
+  const rawFromOpts = opts.preset != null ? String(opts.preset).trim() : null;
+  const rawFromCli = opts.cli && opts.cli.preset != null ? String(opts.cli.preset).trim() : null;
+  const effectiveRaw = rawFromOpts != null && rawFromOpts !== '' ? rawFromOpts : rawFromCli;
+  const presetApplied = normalizePresetName(effectiveRaw);
+  const presetRequested = effectiveRaw != null && effectiveRaw !== '' ? effectiveRaw : presetApplied;
+  const presetCoerced = effectiveRaw != null && effectiveRaw !== '' && !isKnownPreset(effectiveRaw);
+  const budget = resolveBudget(opts.budget || {}, { ...(opts.cli || {}), preset: presetApplied });
+  return { budget, displayTarget: opts.label, presetApplied, presetRequested, presetCoerced };
 }
 
-function withMeta(result, budget, preset) {
+function withMeta(result, budget, presetMeta) {
+  const { presetApplied, presetRequested, presetCoerced } = presetMeta;
   return {
     ...result,
     meta: {
-      preset,
+      preset: presetApplied,
+      presetRequested,
+      presetCoerced,
       budgetSummary: summarizeBudget(budget),
     },
   };
 }
 
-function smartReadFromText(text, displayTarget, budget, preset) {
+function smartReadFromText(text, displayTarget, budget, presetMeta) {
   const lines = text.split('\n');
   const summary = summarizeTextLines(lines, budget.maxPreviewLines);
   const markdownSignals = detectMarkdownSignals(text, lines);
   const configSignals = detectConfigSignals(text, displayTarget);
+  const markdownSections = detectMarkdownSectionMap(lines, budget.maxPreviewLines);
+  const todoSummary = detectTodoMarkers(lines);
+  const readNextHints = [];
+  if (markdownSections.length) {
+    const first = markdownSections[0];
+    readNextHints.push(`start near heading L${first.line} (h${first.level}): ${first.title}`);
+  }
+  if (todoSummary) readNextHints.push(`scan lines with: ${todoSummary}`);
+  if (configSignals.some((s) => s.includes('yaml') || s.includes('runtime-config'))) {
+    readNextHints.push('config/env: use raw read for exact keys after this triage');
+  }
   return withMeta({
     command: 'smart-read',
     target: displayTarget,
@@ -143,24 +208,29 @@ function smartReadFromText(text, displayTarget, budget, preset) {
     },
     anomalyFirst: detectAnomalies(lines, budget.maxPreviewLines),
     fileHints: [...markdownSignals, ...configSignals],
+    markdownSections,
+    todoSummary,
+    readNextHints,
     duplicateHighlights: summary.duplicateGroups.slice(0, 5).map((item) => `${item.count}× ${truncate(item.line)}`),
     preview: summary.preview,
-  }, budget, preset);
+  }, budget, presetMeta);
 }
 
 function smartRead(file, opts = {}) {
-  const { budget, displayTarget, preset } = normalizeOpts(opts);
+  const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
   const text = readText(file);
   const label = displayTarget || path.basename(file);
-  return smartReadFromText(text, label, budget, preset);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartReadFromText(text, label, budget, presetMeta);
 }
 
 function smartReadText(text, displayTarget, opts = {}) {
-  const { budget, preset } = normalizeOpts(opts);
-  return smartReadFromText(text, displayTarget || '(stdin)', budget, preset);
+  const { budget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartReadFromText(text, displayTarget || '(stdin)', budget, presetMeta);
 }
 
-function smartLogFromText(text, displayTarget, budget, preset) {
+function smartLogFromText(text, displayTarget, budget, presetMeta) {
   const allLines = text.split('\n');
   const contentLines = allLines.filter((l) => l.trim().length > 0);
   const levels = { error: 0, warning: 0, info: 0, debug: 0 };
@@ -191,22 +261,24 @@ function smartLogFromText(text, displayTarget, budget, preset) {
     tailPreview: allLines
       .slice(-budget.maxPreviewLines)
       .map((line) => (line.trim() === '' ? '(blank line)' : truncate(line))),
-  }, budget, preset);
+  }, budget, presetMeta);
 }
 
 function smartLog(file, opts = {}) {
-  const { budget, displayTarget, preset } = normalizeOpts(opts);
+  const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
   const text = readText(file);
   const label = displayTarget || path.basename(file);
-  return smartLogFromText(text, label, budget, preset);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartLogFromText(text, label, budget, presetMeta);
 }
 
 function smartLogText(text, displayTarget, opts = {}) {
-  const { budget, preset } = normalizeOpts(opts);
-  return smartLogFromText(text, displayTarget || '(stdin)', budget, preset);
+  const { budget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartLogFromText(text, displayTarget || '(stdin)', budget, presetMeta);
 }
 
-function smartCsvFromText(text, displayTarget, budget, preset) {
+function smartCsvFromText(text, displayTarget, budget, presetMeta) {
   const rows = parseCsvText(text);
   const header = rows[0] || [];
   const body = rows.slice(1);
@@ -242,19 +314,21 @@ function smartCsvFromText(text, displayTarget, budget, preset) {
     anomalyFirst: anomalies.slice(0, budget.maxPreviewLines),
     columnSummary: columnStats,
     sampleRows: body.slice(0, maxRows).map((row, index) => `row ${index + 2}: ${truncate(row.join(' | '))}`),
-  }, budget, preset);
+  }, budget, presetMeta);
 }
 
 function smartCsv(file, opts = {}) {
-  const { budget, displayTarget, preset } = normalizeOpts(opts);
+  const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
   const text = readText(file);
   const label = displayTarget || path.basename(file);
-  return smartCsvFromText(text, label, budget, preset);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartCsvFromText(text, label, budget, presetMeta);
 }
 
 function smartCsvText(text, displayTarget, opts = {}) {
-  const { budget, preset } = normalizeOpts(opts);
-  return smartCsvFromText(text, displayTarget || '(stdin)', budget, preset);
+  const { budget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartCsvFromText(text, displayTarget || '(stdin)', budget, presetMeta);
 }
 
 function summarizeJsonValue(value, depth, budget, state) {
@@ -289,87 +363,118 @@ function summarizeJsonValue(value, depth, budget, state) {
   return JSON.stringify(value);
 }
 
-function collectJsonAnomalies(value, currentPath, output, budget, state, depth) {
-  state = state || { nodes: 0 };
+const MAX_JSON_ARRAY_INDEX_VISITS = 48;
+const MAX_JSON_OBJECT_ARRAY_DEEP_SAMPLES = 4;
+
+/**
+ * Single pass for anomalies + operational hints after structure sketch.
+ * Shares `state.nodes` with summarizeJsonValue so total work stays within maxJsonNodes.
+ */
+function collectJsonIssues(value, currentPath, budget, state, depth, anomalies, hints, seenHints) {
+  seenHints = seenHints || new Set();
   depth = depth || 0;
-  if (output.length >= budget.maxPreviewLines || state.nodes >= budget.maxJsonNodes) return output;
+  if (state.nodes >= budget.maxJsonNodes) return;
   if (depth > budget.maxJsonWalkDepth) {
-    output.push(`${currentPath}: max JSON walk depth reached`);
-    return output;
+    if (anomalies.length < budget.maxPreviewLines) anomalies.push(`${currentPath}: max JSON walk depth reached`);
+    return;
   }
+
   state.nodes += 1;
 
-  if (value === null) return output;
+  if (value === null) return;
+
   if (Array.isArray(value)) {
-    if (value.length === 0 && output.length < budget.maxPreviewLines) output.push(`${currentPath}: empty array`);
-    for (let index = 0; index < value.length; index += 1) {
-      if (output.length >= budget.maxPreviewLines || state.nodes >= budget.maxJsonNodes) break;
-      collectJsonAnomalies(value[index], `${currentPath}[${index}]`, output, budget, state, depth + 1);
+    if (value.length === 0 && anomalies.length < budget.maxPreviewLines) anomalies.push(`${currentPath}: empty array`);
+
+    const isObjectArray =
+      value.length > 0 && value.every((item) => item && typeof item === 'object' && !Array.isArray(item));
+    if (isObjectArray && hints.length < budget.maxPreviewLines) {
+      const sample = value.slice(0, Math.min(24, value.length));
+      const keyUnion = new Set();
+      sample.forEach((item) => Object.keys(item).forEach((k) => keyUnion.add(k)));
+      const hintStr = `${currentPath}: array of objects (len=${value.length}), unionKeys(sample)=${deterministicSort(Array.from(keyUnion)).slice(0, 12).join(',')}`;
+      if (!seenHints.has(hintStr)) {
+        seenHints.add(hintStr);
+        hints.push(hintStr);
+      }
+      const freq = new Map();
+      sample.forEach((item) => {
+        Object.keys(item).forEach((k) => freq.set(k, (freq.get(k) || 0) + 1));
+      });
+      const topFreq = Array.from(freq.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 8)
+        .map(([k, c]) => `${k}×${c}`)
+        .join(',');
+      const kf = `${currentPath}: keyFrequency(sample)=${topFreq}`;
+      if (!seenHints.has(kf)) {
+        seenHints.add(kf);
+        hints.push(kf);
+      }
     }
-    return output;
+
+    const limit = Math.min(value.length, MAX_JSON_ARRAY_INDEX_VISITS);
+    for (let index = 0; index < limit; index += 1) {
+      if (anomalies.length >= budget.maxPreviewLines || state.nodes >= budget.maxJsonNodes) break;
+      if (isObjectArray && index >= MAX_JSON_OBJECT_ARRAY_DEEP_SAMPLES) break;
+      collectJsonIssues(value[index], `${currentPath}[${index}]`, budget, state, depth + 1, anomalies, hints, seenHints);
+    }
+    return;
   }
+
   if (typeof value === 'object') {
     const keys = Object.keys(value);
-    if (keys.length === 0 && output.length < budget.maxPreviewLines) output.push(`${currentPath}: empty object`);
-    for (const key of deterministicSort(keys)) {
-      if (output.length >= budget.maxPreviewLines || state.nodes >= budget.maxJsonNodes) break;
+    if (keys.length === 0 && anomalies.length < budget.maxPreviewLines) anomalies.push(`${currentPath}: empty object`);
+
+    const sorted = deterministicSort(keys);
+    const lowerKeys = sorted.map((k) => k.toLowerCase());
+
+    function pushHintOnce(s) {
+      if (hints.length >= budget.maxPreviewLines || seenHints.has(s)) return;
+      seenHints.add(s);
+      hints.push(s);
+    }
+
+    if (lowerKeys.includes('status')) pushHintOnce(`${currentPath}: has status field`);
+    if (lowerKeys.includes('error') || lowerKeys.includes('errors')) pushHintOnce(`${currentPath}: has error field`);
+    if (lowerKeys.includes('id')) pushHintOnce(`${currentPath}: has id field`);
+    if (lowerKeys.some((k) => /^(timestamp|createdat|updatedat|deletedat)$/i.test(k))) {
+      pushHintOnce(`${currentPath}: has time-like fields`);
+    }
+    if (lowerKeys.some((k) => /^(version|apiversion|schemaversion)$/i.test(k))) {
+      pushHintOnce(`${currentPath}: has version-like fields`);
+    }
+
+    for (const key of sorted) {
+      if (anomalies.length >= budget.maxPreviewLines && hints.length >= budget.maxPreviewLines) break;
+      if (state.nodes >= budget.maxJsonNodes) break;
       const child = value[key];
       const p = `${currentPath}.${key}`;
-      if (child === null && output.length < budget.maxPreviewLines) output.push(`${p}: null`);
-      else if (typeof child === 'string' && child.length > 120 && output.length < budget.maxPreviewLines) output.push(`${p}: long string (${child.length})`);
-      if (child !== null && typeof child === 'object') collectJsonAnomalies(child, p, output, budget, state, depth + 1);
+      if (child === null && anomalies.length < budget.maxPreviewLines) anomalies.push(`${p}: null`);
+      else if (typeof child === 'string' && child.length > 120 && anomalies.length < budget.maxPreviewLines) {
+        anomalies.push(`${p}: long string (${child.length})`);
+      }
+      if (Array.isArray(child) && child.length > 20) {
+        pushHintOnce(`${p}: large array (${child.length})`);
+      }
+      if (child !== null && typeof child === 'object') {
+        collectJsonIssues(child, p, budget, state, depth + 1, anomalies, hints, seenHints);
+      }
     }
   }
-  return output;
 }
 
-function collectJsonOperationalHints(value, currentPath, hints, budget, state, depth) {
-  state = state || { nodes: 0 };
-  depth = depth || 0;
-  if (hints.length >= budget.maxPreviewLines || state.nodes >= budget.maxJsonNodes || depth > budget.maxJsonWalkDepth) {
-    return hints;
-  }
-  state.nodes += 1;
-
-  if (Array.isArray(value)) {
-    if (value.length && value.every((item) => item && typeof item === 'object' && !Array.isArray(item))) {
-      const keyUnion = new Set();
-      value.forEach((item) => Object.keys(item).forEach((key) => keyUnion.add(key)));
-      hints.push(`${currentPath}: array of objects, unionKeys=${deterministicSort(Array.from(keyUnion)).slice(0, 8).join(',')}`);
-    }
-    for (let index = 0; index < value.length; index += 1) {
-      if (hints.length >= budget.maxPreviewLines) break;
-      collectJsonOperationalHints(value[index], `${currentPath}[${index}]`, hints, budget, state, depth + 1);
-    }
-    return hints;
-  }
-
-  if (value && typeof value === 'object') {
-    const keys = deterministicSort(Object.keys(value));
-    const lowerKeys = keys.map((key) => key.toLowerCase());
-    if (lowerKeys.includes('status')) hints.push(`${currentPath}: has status field`);
-    if (lowerKeys.includes('error') || lowerKeys.includes('errors')) hints.push(`${currentPath}: has error field`);
-    if (lowerKeys.includes('id')) hints.push(`${currentPath}: has id field`);
-    for (const key of keys) {
-      if (hints.length >= budget.maxPreviewLines) break;
-      const child = value[key];
-      if (Array.isArray(child) && child.length > 20) hints.push(`${currentPath}.${key}: large array (${child.length})`);
-      collectJsonOperationalHints(child, `${currentPath}.${key}`, hints, budget, state, depth + 1);
-    }
-  }
-  return hints;
-}
-
-function smartJsonFromText(text, displayTarget, budget, preset) {
+function smartJsonFromText(text, displayTarget, budget, presetMeta) {
   const json = JSON.parse(text);
   const rootType = Array.isArray(json) ? 'array' : typeof json;
   const topKeys = rootType === 'object' ? deterministicSort(Object.keys(json)) : [];
   const structState = { nodes: 0 };
   const structure = summarizeJsonValue(json, 0, budget, structState);
-  const anomalies = collectJsonAnomalies(json, '$', [], budget, { nodes: 0 }, 0);
-  const operationalHints = collectJsonOperationalHints(json, '$', [], budget, { nodes: 0 }, 0)
-    .filter((value, index, arr) => arr.indexOf(value) === index)
-    .slice(0, budget.maxPreviewLines);
+  const anomalies = [];
+  const hints = [];
+  const issueState = { nodes: 0 };
+  collectJsonIssues(json, '$', budget, issueState, 0, anomalies, hints, new Set());
+  const operationalHints = hints.slice(0, budget.maxPreviewLines);
 
   return withMeta({
     command: 'smart-json',
@@ -379,35 +484,257 @@ function smartJsonFromText(text, displayTarget, budget, preset) {
       bytes: Buffer.byteLength(text, 'utf8'),
       topLevelKeys: topKeys.length,
       structureNodesVisited: structState.nodes,
+      issueNodesVisited: issueState.nodes,
     },
-    anomalyFirst: anomalies,
+    anomalyFirst: anomalies.slice(0, budget.maxPreviewLines),
     operationalHints,
     structure,
     topKeys: topKeys.slice(0, budget.maxJsonItems),
-  }, budget, preset);
+  }, budget, presetMeta);
 }
 
 function smartJson(file, opts = {}) {
-  const { budget, displayTarget, preset } = normalizeOpts(opts);
+  const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
   const text = readText(file);
   const label = displayTarget || path.basename(file);
-  return smartJsonFromText(text, label, budget, preset);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartJsonFromText(text, label, budget, presetMeta);
 }
 
 function smartJsonText(text, displayTarget, opts = {}) {
-  const { budget, preset } = normalizeOpts(opts);
-  return smartJsonFromText(text, displayTarget || '(stdin)', budget, preset);
+  const { budget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
+  return smartJsonFromText(text, displayTarget || '(stdin)', budget, presetMeta);
 }
 
 function detectProjectHints(names) {
   const lower = new Set(names.map((name) => String(name).toLowerCase()));
   const hints = [];
   if (lower.has('package.json')) hints.push('node/javascript project');
-  if (lower.has('dockerfile') || lower.has('docker-compose.yml')) hints.push('containerized app');
+  if (lower.has('dockerfile') || lower.has('docker-compose.yml') || lower.has('docker-compose.yaml')) {
+    hints.push('containerized app');
+  }
   if (lower.has('.github')) hints.push('github automation present');
   if (lower.has('openclaw')) hints.push('openclaw integration folder present');
-  if (lower.has('src') && lower.has('test')) hints.push('code + tests visible');
+  if (lower.has('openclaw.json')) hints.push('openclaw config at repo root');
+  if (lower.has('src') && (lower.has('test') || lower.has('tests'))) hints.push('code + tests visible');
+  if (lower.has('packages') || lower.has('apps')) hints.push('possible monorepo layout');
+  if (lower.has('cargo.toml')) hints.push('rust project');
+  if (lower.has('go.mod')) hints.push('go module');
+  if (lower.has('pyproject.toml') || lower.has('setup.py')) hints.push('python project');
   return hints;
+}
+
+const TREE_TRIAGE_SKIP = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  'coverage',
+  '__pycache__',
+  'vendor',
+]);
+
+function mtimeDayUtc(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** Bounded depth-0/1 file scan for agent triage (deterministic ordering). */
+function collectTreeTriage(rootDir, budget) {
+  const root = path.resolve(rootDir);
+  const maxStats = Math.min(200, Math.max(48, budget.maxTreeEntries * 5));
+  const acc = [];
+  let statsUsed = 0;
+
+  function touch(relPath, fullPath) {
+    if (statsUsed >= maxStats) return;
+    try {
+      const st = fs.statSync(fullPath);
+      statsUsed += 1;
+      if (st.isFile()) {
+        acc.push({
+          path: relPath.replace(/\\/g, '/'),
+          mtimeMs: st.mtimeMs,
+          sizeBytes: st.size,
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let rootNames = [];
+  try {
+    rootNames = deterministicSort(fs.readdirSync(root));
+  } catch {
+    return {
+      readNext: [],
+      readNextPaths: [],
+      recentlyTouched: [],
+      likelyBuildDeploy: [],
+      likelyTestSignals: [],
+      likelyDocs: [],
+      stackSignals: [],
+      monorepoHint: null,
+      whyThisMatters: [],
+    };
+  }
+
+  const lower = new Set(rootNames.map((n) => n.toLowerCase()));
+
+  function actualName(wantedLower) {
+    return rootNames.find((n) => n.toLowerCase() === wantedLower);
+  }
+
+  const readNextSeen = new Set();
+  const readNext = [];
+  const ORDERED_READ_RULES = [
+    { names: ['README.md', 'README.rst', 'README.txt'], reason: 'project overview / how to run' },
+    { names: ['AGENTS.md'], reason: 'agent-specific instructions' },
+    { names: ['CONTRIBUTING.md'], reason: 'contribution / dev workflow' },
+    { names: ['package.json'], reason: 'npm scripts, dependencies, metadata' },
+    { names: ['Cargo.toml'], reason: 'Rust manifest' },
+    { names: ['go.mod'], reason: 'Go module' },
+    { names: ['pyproject.toml'], reason: 'Python project (PEP 621)' },
+    { names: ['setup.py', 'requirements.txt'], reason: 'Python legacy / deps list' },
+    { names: ['composer.json'], reason: 'PHP dependencies' },
+    { names: ['Makefile'], reason: 'build targets' },
+    { names: ['Dockerfile'], reason: 'container image build' },
+    { names: ['docker-compose.yml', 'docker-compose.yaml'], reason: 'multi-service stack' },
+    { names: ['openclaw.json'], reason: 'OpenClaw configuration' },
+  ];
+  for (const rule of ORDERED_READ_RULES) {
+    for (const nm of rule.names) {
+      const got = actualName(nm.toLowerCase());
+      if (got && !readNextSeen.has(got.toLowerCase())) {
+        readNext.push({ path: got, reason: rule.reason });
+        readNextSeen.add(got.toLowerCase());
+      }
+    }
+  }
+
+  const pkgPath = path.join(root, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const raw = fs.readFileSync(pkgPath, 'utf8').slice(0, 65536);
+      const pkg = JSON.parse(raw);
+      const main = typeof pkg.main === 'string' ? pkg.main.replace(/^\.\//, '') : null;
+      if (main) {
+        const tries = [main, path.join('src', main), path.join('lib', main), path.join('src', path.basename(main))];
+        const seenTry = new Set();
+        for (const t of tries) {
+          const normKey = t.replace(/\\/g, '/').toLowerCase();
+          if (seenTry.has(normKey)) continue;
+          seenTry.add(normKey);
+          const full = path.join(root, t);
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+            const norm = t.replace(/\\/g, '/');
+            const key = norm.toLowerCase();
+            if (!readNextSeen.has(key)) {
+              readNext.push({ path: norm, reason: 'runtime entry from package.json main' });
+              readNextSeen.add(key);
+            }
+            break;
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const likelyDocs = readNext.filter((r) => /^readme/i.test(r.path) || r.path === 'AGENTS.md').map((r) => r.path);
+
+  let monorepoHint = null;
+  if (rootNames.includes('packages') || rootNames.includes('apps')) {
+    monorepoHint = 'Monorepo-style top-level packages/ or apps/ — drill into leaf packages after root scan.';
+  }
+
+  const stackSignals = [];
+  if (lower.has('package.json')) stackSignals.push('stack: Node/npm');
+  if (lower.has('cargo.toml')) stackSignals.push('stack: Rust');
+  if (lower.has('go.mod')) stackSignals.push('stack: Go');
+  if (lower.has('pyproject.toml') || lower.has('requirements.txt')) stackSignals.push('stack: Python');
+  if (lower.has('gemfile')) stackSignals.push('stack: Ruby');
+  if (likelyDocs.length >= 2 && !lower.has('package.json') && !lower.has('cargo.toml')) {
+    stackSignals.push('profile: docs-heavy');
+  }
+
+  for (const name of rootNames) {
+    if (statsUsed >= maxStats) break;
+    if (TREE_TRIAGE_SKIP.has(name)) continue;
+    touch(name, path.join(root, name));
+  }
+
+  for (const name of rootNames) {
+    if (statsUsed >= maxStats) break;
+    if (TREE_TRIAGE_SKIP.has(name)) continue;
+    const full = path.join(root, name);
+    let isDir = false;
+    try {
+      isDir = fs.statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) continue;
+    let sub = [];
+    try {
+      sub = deterministicSort(fs.readdirSync(full));
+    } catch {
+      continue;
+    }
+    for (const sn of sub) {
+      if (statsUsed >= maxStats) break;
+      if (TREE_TRIAGE_SKIP.has(sn)) continue;
+      touch(`${name}/${sn}`, path.join(full, sn));
+    }
+  }
+
+  acc.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path));
+  const recentlyTouched = acc.slice(0, 12).map((f) => ({
+    path: f.path,
+    sizeBytes: f.sizeBytes,
+    modified: mtimeDayUtc(f.mtimeMs),
+  }));
+
+  const likelyTestSignals = [];
+  if (rootNames.some((n) => /^tests?$/i.test(n))) likelyTestSignals.push('tests/ or test/ at repo root');
+  if (rootNames.includes('__tests__')) likelyTestSignals.push('__tests__/ at repo root');
+  if (rootNames.some((n) => /^spec$/i.test(n))) likelyTestSignals.push('spec/ at repo root');
+
+  const likelyBuildDeploy = [];
+  for (const n of rootNames) {
+    const low = n.toLowerCase();
+    if (low === 'dockerfile' || low.startsWith('docker-compose')) likelyBuildDeploy.push(n);
+    if (/^vite\.config\.|^webpack\.|^rollup\.config\.|^esbuild\.config\./i.test(n)) likelyBuildDeploy.push(n);
+    if (low === 'tsconfig.json' || low === 'makefile' || /\.gradle$/i.test(n)) likelyBuildDeploy.push(n);
+  }
+  if (likelyBuildDeploy.length >= 4) stackSignals.push('profile: infra/build-heavy');
+  if (lower.has('openclaw') || lower.has('openclaw.json')) stackSignals.push('profile: OpenClaw-adjacent');
+
+  const whyThisMatters = [];
+  if (readNext.length) {
+    whyThisMatters.push(`Prioritized ${Math.min(readNext.length, 7)} root-level files to inspect before random reads.`);
+  }
+  if (acc.length) whyThisMatters.push('Shallow recently-touched files hint where work is active.');
+  if (monorepoHint) whyThisMatters.push(monorepoHint);
+
+  const readNextCapped = readNext.slice(0, 14);
+  const readNextPaths = readNextCapped.map((r) => r.path);
+
+  return {
+    readNext: readNextCapped,
+    readNextPaths,
+    recentlyTouched,
+    likelyBuildDeploy: deterministicSort([...new Set(likelyBuildDeploy)]).slice(0, 10),
+    likelyTestSignals,
+    likelyDocs: deterministicSort(likelyDocs),
+    stackSignals: deterministicSort(stackSignals),
+    monorepoHint,
+    whyThisMatters,
+  };
 }
 
 function walkTree(dir, depth, state, budget) {
@@ -426,10 +753,12 @@ function walkTree(dir, depth, state, budget) {
 }
 
 function smartTree(dir, opts = {}) {
-  const { budget, displayTarget, preset } = normalizeOpts(opts);
+  const { budget, displayTarget, presetApplied, presetRequested, presetCoerced } = normalizeOpts(opts);
   const state = walkTree(dir, 0, { entries: [], projectHints: [] }, budget);
+  const triageHints = collectTreeTriage(dir, budget);
   const totalDirs = state.entries.filter((line) => line.trim().startsWith('dir ')).length;
   const totalFiles = state.entries.filter((line) => line.trim().startsWith('file ')).length;
+  const presetMeta = { presetApplied, presetRequested, presetCoerced };
   return withMeta({
     command: 'smart-tree',
     target: displayTarget || path.basename(dir),
@@ -441,8 +770,9 @@ function smartTree(dir, opts = {}) {
     },
     anomalyFirst: state.entries.length >= budget.maxTreeEntries ? ['tree truncated to deterministic entry budget'] : [],
     projectHints: state.projectHints,
+    triageHints,
     entries: state.entries,
-  }, budget, preset);
+  }, budget, presetMeta);
 }
 
 function formatValue(value, indent = 0) {
@@ -453,6 +783,9 @@ function formatValue(value, indent = 0) {
       if (typeof item === 'string') return `${prefix}- ${item}`;
       if (item && typeof item === 'object' && !Array.isArray(item) && item.line != null && item.kind != null) {
         return `${prefix}- line ${item.line} (${item.kind}): ${item.text}`;
+      }
+      if (item && typeof item === 'object' && !Array.isArray(item) && item.path != null && item.reason != null) {
+        return `${prefix}- ${item.path} — ${item.reason}`;
       }
       return `${prefix}-\n${formatValue(item, indent + 1)}`;
     }).join('\n');
@@ -476,6 +809,8 @@ module.exports = {
   DEFAULT_PRESET,
   PRESET_BUDGETS,
   resolveBudget,
+  isKnownPreset,
+  normalizePresetName,
   smartRead,
   smartLog,
   smartCsv,
@@ -486,4 +821,5 @@ module.exports = {
   smartCsvText,
   smartJsonText,
   formatOutput,
+  ...require('./policy'),
 };

@@ -2,7 +2,7 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
-> v0.3 direction: **OpenClaw-first, agent-first**. This is a local reduction layer for agent workflows, not a generic “all LLMs everywhere” wrapper.
+> **OpenClaw-first, agent-first** (v0.6). Local reduction + **`advise`** policy before expensive `read`s. Not a generic “all LLMs everywhere” wrapper. Complements **RTK** on `exec` — see [docs/RTK_COMPAT.md](./docs/RTK_COMPAT.md). Agent workflow: **[openclaw/SKILL.md](./openclaw/SKILL.md)**.
 
 ## Why this exists
 
@@ -22,7 +22,18 @@ OpenClaw already has excellent primitives for exact reads and shell work. This t
 - RTK/shell rewriting is better when the command output itself needs reshaping.
 - `context-optimizer` is best when a local artifact is too noisy to read raw.
 
-See [`openclaw/README.md`](./openclaw/README.md) for workflow guidance and a lightweight integration stub.
+See [`openclaw/README.md`](./openclaw/README.md) for plugin install (optional **`suggestOnLargeRead`** hook) and [`openclaw/SKILL.md`](./openclaw/SKILL.md) for the step-by-step agent method.
+
+### Which tool when? (compact)
+
+| You have… | First move |
+|-----------|------------|
+| Unknown repo folder | `advise` → `smart-tree --preset=triage` |
+| Huge log | `advise` → `smart-log` (often `--preset=aggressive`) |
+| Huge JSON / JSONL | `advise` → `smart-json` (often `--preset=schema`) |
+| Huge CSV | `advise` → `smart-csv` |
+| Small / exact snippet | Native **`read`** |
+| **`exec` / shell output** | **RTK**, not file reducers |
 
 ## Commands
 
@@ -32,7 +43,8 @@ context-optimizer smart-log [options] <file>
 context-optimizer smart-csv [options] <file>
 context-optimizer smart-json [options] <file>
 context-optimizer smart-tree [options] <dir>
-context-optimizer metrics [--clear] [--limit=N]
+context-optimizer metrics [--clear] [--limit=N] [--json]
+context-optimizer advise <file-or-dir> [--urgency=tight] [--command-hint=exec]
 ```
 
 ## Presets
@@ -72,36 +84,33 @@ CLI flags like `--max-lines`, `--max-depth`, `--json-depth`, and `--budget` stil
 | `--tokens` | Append rough token estimates (~bytes/4) |
 | `--metrics` | Append this run to `~/.context-optimizer/metrics.jsonl` |
 | `--strict-preset` | Fail if `--preset` is not a known name (no silent fallback to `balanced`) |
+| `--workflow-tag=TAG` | Stored on each metrics row (or `CONTEXT_OPTIMIZER_WORKFLOW_TAG`) |
 
-JSON output includes `meta.preset`, `meta.presetRequested`, `meta.presetCoerced` so agents see when a typo was corrected.
+For **`metrics`**, add `--json` to print `aggregateMetrics` + a recent tail (machine-readable).
+
+JSON reducer output includes `meta.preset`, `meta.presetRequested`, `meta.presetCoerced` so agents see when a typo was corrected.
+
+### Policy (`advise`)
+
+`advise` prints JSON: **`action`** (`raw-read` | `reduce` | `rtk-shell`), **`confidence`**, **`why[]`**, **`recommendedCli`** / **`recommendedCommand`**, **`nextStepIfInsufficient`**, plus path/repo hints. Same rules live in `src/policy.js` (`require('openclaw-context-optimizer/policy')`).
 
 ### Metrics privacy
 
 Set `CONTEXT_OPTIMIZER_METRICS_SAFE=1` to omit `cwd` from JSONL lines and truncate `error` messages.
 
-## What changed in v0.3 / v0.4
+## What changed in v0.6
 
-### Agent-oriented metrics
+- **`openclaw/SKILL.md`**: OpenClaw agent workflow (advise → reducer → targeted read; RTK boundary)
+- **`smart-tree` v2**: `triageHints.readNext` as **`{ path, reason }[]`**, plus **`readNextPaths`**, **`stackSignals`**, **`whyThisMatters`**, optional **`package.json` `main`** hint
+- **Policy v2**: richer **`advise()`**; CLI **`advise`** emits the full decision object + explanation
+- **Plugin v2**: opt-in **`suggestOnLargeRead`** (`before_tool_call`), **`readToolNames`**, **`matchers`**, **`extensions`**, **`logSuggestions`**
+- **Metrics**: per-command / per-preset **avg ratio**, **`workflowTagGroups`** in `aggregateMetrics` + dashboard lines
 
-Metrics entries include fields useful for real agent usage, including:
-- `durationMs`
-- `preset` (applied)
-- `budgetSummary`
-- `sourceType` (`file` or `stdin`)
-- `success`
-- `cwd` (omitted when `CONTEXT_OPTIMIZER_METRICS_SAFE=1`)
-- `repoKey` (`pkg:name`, `git:folder`, or `dir:basename` — walks up to `package.json` / `.git`)
+## v0.5 (recap)
 
-The `context-optimizer metrics` dashboard shows success/failure counts, average runtime, source mix, command/preset usage, and a **repos:** aggregate (falls back to legacy `projectHint` in old JSONL lines).
+- Plugin scaffold, policy + `advise`, stronger `smart-tree` / `smart-read` / `smart-json`, metrics + `workflowTag`, RTK doc
 
-Still append-only JSONL.
-
-### Reducer improvements for agent triage
-
-- `smart-tree` adds lightweight **project hints** (Node project, tests visible, container config, OpenClaw folder, etc.; folder names matched case-insensitively)
-- `smart-read` adds **markdown/config awareness** and **assignment-style** secret hints (`likely-secret-assignment`), not bare word matches
-- `smart-json` merges **anomalies + operational hints** in one bounded walk; large homogeneous object arrays sample keys instead of visiting every element
-- `smart-log` adds first/last anomaly summary in addition to grouped patterns
+Earlier releases added presets, rich metrics, `repoKey`, merged JSON issue pass, `--strict-preset`, metrics safe mode, dual CLI bin name (`context-optimizer` / `openclaw-context-optimizer`).
 
 ## Example philosophy: raw vs compact
 
@@ -145,18 +154,19 @@ context-optimizer metrics
 
 ## Programmatic use
 
-`require('context-optimizer-toolkit')` exposes:
+`require('openclaw-context-optimizer')` exposes:
 - `smartRead`, `smartLog`, `smartCsv`, `smartJson`, `smartTree`
 - `smartReadText`, `smartLogText`, `smartCsvText`, `smartJsonText`
 - `formatOutput(result)`
 - `resolveBudget`, `DEFAULT_BUDGET`, `isKnownPreset`, `normalizePresetName`, preset metadata
+- Policy helpers: `shouldReduce`, `recommendedReducer`, `recommendedPreset`, `explainPolicyDecision` (same as `require('openclaw-context-optimizer/policy')`)
 
 ## Repository structure
 
 ```text
 bin/        CLI entrypoint
-docs/       architecture + integration notes
-openclaw/   OpenClaw-specific docs + lightweight integration stub
+docs/       architecture + integration notes + RTK_COMPAT
+openclaw/   OpenClaw plugin scaffold + docs + plugin-example
 samples/    sample inputs
 scripts/    smoke test and demo
 src/        reducers, presets, metrics, CSV parser
@@ -172,16 +182,8 @@ npm test
 
 ## Publishing state
 
-This repo is intended to be open-source ready. The remaining publish-time items are explicit rather than placeholder-y.
-
-- Set your final GitHub repository URL in `package.json`
-- Add screenshots if you want a nicer package page
-- Add real-world fixtures if you want benchmark credibility
-
-## License
-
-MIT
-es if you want benchmark credibility
+- GitHub metadata is set in `package.json` for [openclaw-context-optimizer](https://github.com/Luc-Michault/openclaw-context-optimizer).
+- Optional: screenshots on the README, benchmark fixtures for marketing.
 
 ## License
 

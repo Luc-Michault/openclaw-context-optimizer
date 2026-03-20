@@ -1,0 +1,69 @@
+{
+  "id": "openclaw-context-optimizer",
+  "name": "OpenClaw Context Optimizer",
+  "version": "0.6.0",
+  "description": "Local file/log/JSON/CSV/tree reducers and policy helpers for agent triage before expensive reads",
+  "homepage": "https://github.com/Luc-Michault/openclaw-context-optimizer",
+  "license": "MIT",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Load plugin (disabling skips registration only; CLI still works)"
+      },
+      "verbose": {
+        "type": "boolean",
+        "default": false,
+        "description": "Log plugin bootstrap to the console"
+      },
+      "defaultPreset": {
+        "type": "string",
+        "default": "agent",
+        "description": "Default preset passed to helpers (balanced | agent | triage | aggressive | schema)"
+      },
+      "maxFileBytes": {
+        "type": "integer",
+        "minimum": 1024,
+        "default": 2097152,
+        "description": "Soft cap for auto-suggestions: above this, policy leans toward reducers"
+      },
+      "extensions": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional extra file extensions (without dot) to treat as text-ish for routing hints"
+      },
+      "matchers": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "When suggestOnLargeRead is on: only warn if resolved path contains one of these substrings"
+      },
+      "suggestOnLargeRead": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in: before configured read-like tool calls, log policy hints when file size ≥ maxFileBytes"
+      },
+      "readToolNames": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tool names treated as file reads for suggestOnLargeRead (default: [\"read\"])"
+      },
+      "logSuggestions": {
+        "type": "boolean",
+        "default": true,
+        "description": "When suggestOnLargeRead: emit console.warn with advise summary (set false to register hook quietly)"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable plugin" },
+    "verbose": { "label": "Verbose logging" },
+    "defaultPreset": { "label": "Default preset" },
+    "maxFileBytes": { "label": "Large-file hint threshold (bytes)" },
+    "suggestOnLargeRead": { "label": "Suggest on large read tool calls" },
+    "readToolNames": { "label": "Read tool names to watch" },
+    "logSuggestions": { "label": "Log suggestions to console" }
+  }
+}

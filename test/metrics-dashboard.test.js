@@ -15,11 +15,14 @@ test('metrics dashboard renders preset/source/runtime fields', () => {
       preset: 'agent',
       durationMs: 9,
       success: true,
-      projectHint: 'demo',
+      repoKey: 'demo',
     },
   ]);
   assert.match(output, /presets: agent:1/);
   assert.match(output, /sources: file 1  stdin 0/);
   assert.match(output, /avgMs: 9/);
   assert.match(output, /smart-read/);
+  assert.match(output, /repos: demo:1/);
+  assert.match(output, /avg ratio \/ command:/);
+  assert.match(output, /workflowTag:/);
 });
