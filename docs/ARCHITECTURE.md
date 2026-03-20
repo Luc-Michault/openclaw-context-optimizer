@@ -2,60 +2,78 @@
 
 ## Overview
 
-The toolkit is a single-process Node.js CLI with one executable entrypoint and a small set of deterministic summarizers.
+The toolkit is a single-process Node.js CLI with deterministic reducers, preset-aware budgets, and append-only JSONL metrics.
 
 ```text
 bin/context-optimizer.js
         |
+        +-- src/budget.js      (presets + CLI budget overrides)
+        +-- src/metrics.js     (JSONL metrics + terminal dashboard)
+        +-- src/csv-parse.js   (RFC 4180–style CSV)
         v
      src/index.js
         |
-        +-- smartRead(file)
-        +-- smartLog(file)
-        +-- smartCsv(file)
-        +-- smartJson(file)
+        +-- smartRead(file | text)
+        +-- smartLog(file | text)
+        +-- smartCsv(file | text)
+        +-- smartJson(file | text)
         +-- smartTree(dir)
 ```
 
+## v0.3 direction
+
+This is an **agent-side reduction layer**.
+
+It is not trying to be:
+- a universal prompt middleware
+- a shell wrapper replacement
+- a framework for remote hosted summarization
+
+It is trying to be:
+- deterministic
+- local-first
+- cheap to run inside agent workflows
+- good at first-pass triage before exact reads
+
 ## Core choices
 
-### Single entrypoint
-The CLI is intentionally exposed through one `bin` command and routes subcommands internally. That keeps installation, packaging, and discoverability simple.
+### Presets over config sprawl
 
-### Shared heuristics
-Several rules are shared across commands:
+v0.3 adds agent-friendly presets (`agent`, `triage`, `aggressive`, `schema`) that map onto the existing budget knobs. This keeps the surface area small while giving agents clearer intent.
 
-- bounded previews
-- deterministic sorting
-- compact string truncation
-- anomaly-first ordering
-- duplicate/pattern grouping
+### Meta in every result
 
-### Determinism strategy
+Reducers now attach:
+- `meta.preset`
+- `meta.budgetSummary`
+
+That keeps downstream agents and dashboards aware of **how** a summary was produced.
+
+### Simple append-only metrics
+
+Metrics stay JSONL and append-only. No database, no migrations, no daemon. The dashboard computes aggregates on read.
+
+### Scoped triage heuristics
+
+Reducer improvements stay narrow and deterministic:
+- `smart-tree`: project hints from top-level files/folders
+- `smart-read`: markdown/config awareness
+- `smart-json`: operational hints
+- `smart-log`: anomaly range summary
+
+## Determinism strategy
+
 To keep output stable across runs:
-
 - directory names and object keys are alphabetically sorted
-- preview budgets are fixed
-- grouping output is sorted by count then lexicographically
-- formatting is plain text, not terminal-width dependent
+- budgets are explicit and fixed unless overridden
+- grouped patterns sort by count then lexicographically
+- formatting is plain text, not terminal-width dependent logic-heavy UI
 
-## Command behaviors
+## OpenClaw fit
 
-### `smart-read`
-Designed for generic text. It reports broad file stats, repeated lines, lightweight anomaly detection, and a short unique-line preview.
+The intended loop is:
+1. tree or reducer first
+2. exact `read` second
+3. patch only after narrowing scope
 
-### `smart-log`
-Adds log-specific grouping by normalizing timestamps, numbers, and hex values into stable patterns. This collapses noisy streams into a few dominant templates.
-
-### `smart-csv`
-Treats CSV as a simple grid and computes per-column statistics suitable for quick inspection and schema drift detection.
-
-### `smart-json`
-Builds a compact structural sketch of nested JSON and flags obvious anomalies like nulls, empty containers, and long strings.
-
-### `smart-tree`
-Walks the filesystem with depth and entry budgets to avoid runaway output. It produces a readable tree-like list without relying on external commands.
-
-## Why plain JavaScript
-
-This project targets easy cloning and local use. Plain CommonJS avoids build steps and keeps the MVP publishable with minimal tooling.
+That is why the project now has an `openclaw/` directory rather than pretending to be runtime-agnostic at the product layer.

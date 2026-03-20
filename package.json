@@ -1,7 +1,11 @@
 {
   "name": "context-optimizer-toolkit",
-  "version": "0.1.0",
-  "description": "Compact deterministic CLI summaries for files, logs, JSON, CSV, and directory trees.",
+  "version": "0.3.0",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "description": "Deterministic local reducers for agent-first file, log, JSON, CSV, and tree triage.",
   "license": "MIT",
   "type": "commonjs",
   "bin": {
@@ -9,27 +13,28 @@
   },
   "scripts": {
     "smoke": "node scripts/smoke-test.js",
-    "demo": "node scripts/demo.js"
+    "demo": "node scripts/demo.js",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "cli",
     "context",
     "optimizer",
+    "agents",
+    "openclaw",
     "summarization",
     "logs",
     "json",
     "csv",
-    "llm",
-    "agents",
     "token-optimization"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_ORG/context-optimizer-toolkit.git"
+    "url": "TODO: set repository URL"
   },
-  "homepage": "https://github.com/YOUR_ORG/context-optimizer-toolkit#readme",
+  "homepage": "TODO: set homepage URL",
   "bugs": {
-    "url": "https://github.com/YOUR_ORG/context-optimizer-toolkit/issues"
+    "url": "TODO: set issue tracker URL"
   },
   "engines": {
     "node": ">=18"

@@ -1,21 +1,29 @@
 # Roadmap
 
+## v0.3 shipped
+
+- [x] OpenClaw-first docs and `openclaw/` integration folder
+- [x] Agent-oriented presets (`agent`, `triage`, `aggressive`, `schema`)
+- [x] Richer append-only metrics + improved terminal dashboard
+- [x] Scoped agent-triage heuristics across tree/read/json/log reducers
+- [x] Smoke + unit tests for presets, metrics, and new reducer hints
+
 ## Near-term
-- Add `--json` output mode
-- Add `--max-lines`, `--max-depth`, `--max-items` flags
-- Improve CSV parsing for quoted cells
-- Add markdown-aware reducer
-- Add diff-aware reducer
-- Add benchmark fixtures with raw vs compact stats
+
+- [ ] Markdown heading extraction beyond lightweight file hints
+- [ ] Diff-aware reducer
+- [ ] Published benchmark fixtures with raw vs compact stats
+- [ ] YAML/XML specific reducers if they prove worth the maintenance
 
 ## Mid-term
-- Plugin system for custom reducers
-- Streaming mode for large logs
-- Config file support
-- Library API examples for agent frameworks
-- Optional token estimation metrics
+
+- [ ] Config file support if presets stop being enough
+- [ ] Optional plugin hooks for custom reducers
+- [ ] Library API examples for more agent runtimes
+- [ ] Optional exact tokenizer hook behind optional dependency
 
 ## Longer-term
-- Pre-context middleware adapters for agent runtimes
-- Shell wrapper integration (RTK-style complement)
-- Benchmark corpus and leaderboard
+
+- [ ] OpenClaw helper wrappers once real usage stabilizes
+- [ ] Streaming mode for very large logs
+- [ ] Benchmark corpus and leaderboard

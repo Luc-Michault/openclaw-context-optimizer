@@ -2,101 +2,104 @@
 
 A small open-source CLI for turning noisy local files into compact, deterministic, human-readable summaries.
 
-> Goal: reduce what an LLM or human needs to read while preserving decision-relevant context.
+> v0.3 direction: **OpenClaw-first, agent-first**. This is a local reduction layer for agent workflows, not a generic “all LLMs everywhere” wrapper.
 
 ## Why this exists
 
-Large files are expensive to read in full, annoying to paste into chat, and often full of repetition. The goal of this toolkit is not to perfectly summarize everything. The goal is to preserve **decision-relevant context** while cutting obvious waste:
+Large files are expensive to read in full, annoying to paste into chat, and often full of repetition. The goal is not perfect summarization. The goal is to preserve **decision-relevant context** while cutting obvious waste:
 
 - repeated lines
-- boring boilerplate
+- boilerplate
 - oversized JSON structures
 - long logs where a few anomalies matter most
 - directory trees that are too large to inspect raw
 
-This makes the toolkit useful for AI workflows, terminal triage, debugging, and quick human review.
+## OpenClaw-first positioning
 
-## Design principles
+OpenClaw already has excellent primitives for exact reads and shell work. This toolkit is useful when an agent needs a **bounded first pass** before choosing where to look next.
 
-- **Compact by default**: prefer signal over completeness.
-- **Deterministic output**: same input should produce the same summary ordering.
-- **Human-readable**: plain text, stable sections, no fancy rendering required.
-- **Anomaly-first**: surface errors, warnings, schema drift, and suspicious structure before the rest.
-- **Dedupe-aware**: collapse repeated patterns and report counts.
-- **Truncation with intent**: use bounded previews instead of dumping raw content.
-- **Generic**: no private paths, no platform-specific assumptions.
+- `read` is still better for small or exact files.
+- RTK/shell rewriting is better when the command output itself needs reshaping.
+- `context-optimizer` is best when a local artifact is too noisy to read raw.
 
-## Install locally
-
-```bash
-npm link
-```
-
-This exposes a local executable named `context-optimizer`.
-
-## Open-source positioning
-
-This project is designed as a **generic pre-context reduction layer** for agent/tooling workflows.
-It does not try to replace shell wrappers like RTK. Instead, it complements them by focusing on
-**file payloads and structured local artifacts** such as logs, CSV, JSON, text files, and directory trees.
+See [`openclaw/README.md`](./openclaw/README.md) for workflow guidance and a lightweight integration stub.
 
 ## Commands
 
 ```bash
-context-optimizer smart-read <file>
-context-optimizer smart-log <file>
-context-optimizer smart-csv <file>
-context-optimizer smart-json <file>
-context-optimizer smart-tree <dir>
+context-optimizer smart-read [options] <file>
+context-optimizer smart-log [options] <file>
+context-optimizer smart-csv [options] <file>
+context-optimizer smart-json [options] <file>
+context-optimizer smart-tree [options] <dir>
+context-optimizer metrics [--clear] [--limit=N]
 ```
 
-## What each command does
+## Presets
 
-### `smart-read <file>`
-Best-effort compact summary for general text files.
+Presets are agent-oriented budget bundles that tune the existing reducers without adding new complexity.
 
-Heuristics:
-- line counts and blank-line counts
-- unique-vs-total line estimation
-- duplicate line groups
-- anomaly-first scan for error/warning/status patterns
-- bounded unique-line preview
+| Preset | Best for | Behavior |
+|---|---|---|
+| `agent` | everyday OpenClaw work | balanced detail with slightly deeper tree/JSON inspection |
+| `triage` | first-pass repo inspection | cheaper output, quick project hints |
+| `aggressive` | tight context budgets | more compact previews and shallower traversal |
+| `schema` | JSON/config inspection | larger JSON shape budget, structure-first |
+| `balanced` | default fallback | legacy-like defaults |
 
-### `smart-log <file>`
-Focused log summarizer.
+Use them with any reducer:
 
-Heuristics:
-- rough level counts (`error`, `warning`, `info`, `debug`)
-- anomaly-first extraction
-- pattern grouping with timestamps and numbers normalized
-- deterministic tail preview
+```bash
+context-optimizer smart-tree . --preset=triage
+context-optimizer smart-log app.log --preset=aggressive
+context-optimizer smart-json package-lock.json --preset=schema
+```
 
-### `smart-csv <file>`
-Quick CSV structural summary.
+CLI flags like `--max-lines`, `--max-depth`, `--json-depth`, and `--budget` still override the preset.
 
-Heuristics:
-- row and column counts
-- per-column uniqueness/empties/numeric ranges
-- anomaly-first row width mismatch reporting
-- bounded sample rows
+## CLI options
 
-### `smart-json <file>`
-Compact JSON structure inspection.
+| Flag | Effect |
+|------|--------|
+| `--json` | Print structured JSON (stable keys) instead of plain text |
+| `--preset=NAME` | `balanced`, `agent`, `triage`, `aggressive`, `schema` |
+| `--max-lines=N` | Preview lines, anomaly cap, pattern cap, CSV sample rows |
+| `--max-depth=N` | Directory tree max depth |
+| `--json-depth=N` | Max JSON walk depth for structure + anomalies |
+| `--budget=N` | Coarse knob: tree entry cap + JSON node visit budget |
+| `--stdin` | Read file body from stdin (requires `--label`) |
+| `--label=NAME` | Override target name in output and metrics |
+| `--tokens` | Append rough token estimates (~bytes/4) |
+| `--metrics` | Append this run to `~/.context-optimizer/metrics.jsonl` |
 
-Heuristics:
-- root type and top-level key count
-- stable key ordering
-- nested structure sketch
-- anomaly-first reporting for nulls, empty objects/arrays, and very long strings
+## What changed in v0.3
 
-### `smart-tree <dir>`
-Budgeted directory tree overview.
+### Agent-oriented metrics
 
-Heuristics:
-- deterministic alphabetical traversal
-- bounded depth and entry count
-- clear `dir`/`file` markers
-- truncation notice when the tree exceeds the display budget
+Metrics entries now include fields useful for real agent usage, including:
+- `durationMs`
+- `preset`
+- `budgetSummary`
+- `sourceType` (`file` or `stdin`)
+- `success`
+- `cwd`
+- `projectHint`
+
+The `context-optimizer metrics` dashboard now shows:
+- success/failure counts
+- average runtime
+- source mix (file vs stdin)
+- command and preset usage
+- recent run table with preset/source/runtime
+
+Still simple, still append-only JSONL.
+
+### Reducer improvements for agent triage
+
+- `smart-tree` adds lightweight **project hints** (Node project, tests visible, container config, OpenClaw folder, etc.)
+- `smart-read` adds **markdown/config awareness** and sensitive-keyword hints
+- `smart-json` adds **operational hints** (status/error/id fields, arrays of objects, large arrays)
+- `smart-log` adds first/last anomaly summary in addition to grouped patterns
 
 ## Example philosophy: raw vs compact
 
@@ -122,53 +125,56 @@ stats:
     warning: 1
     info: 3
     debug: 0
-anomalyFirst:
-  - line 3: WARN retrying request id=92
-  - line 4: ERROR request failed status=500 id=92
+anomalySummary:
+  - first warning @ line 3
+  - last error @ line 4
 groupedPatterns:
-  - count: 3
+  -
     pattern: <timestamp> INFO worker started id=<n>
+    count: 3
 ```
 
-The toolkit intentionally prefers the grouped pattern and the anomalies over the full raw stream.
+## Metrics dashboard
+
+```bash
+context-optimizer smart-log app.log --metrics --preset=agent
+context-optimizer metrics
+```
+
+## Programmatic use
+
+`require('context-optimizer-toolkit')` exposes:
+- `smartRead`, `smartLog`, `smartCsv`, `smartJson`, `smartTree`
+- `smartReadText`, `smartLogText`, `smartCsvText`, `smartJsonText`
+- `formatOutput(result)`
+- `resolveBudget`, `DEFAULT_BUDGET`, preset metadata
 
 ## Repository structure
 
 ```text
-bin/      CLI entrypoint
-src/      summarization logic
-docs/     architecture notes
-scripts/  smoke test and demo
-samples/  sample inputs for quick evaluation
+bin/        CLI entrypoint
+docs/       architecture + integration notes
+openclaw/   OpenClaw-specific docs + lightweight integration stub
+samples/    sample inputs
+scripts/    smoke test and demo
+src/        reducers, presets, metrics, CSV parser
+test/       node:test suite
 ```
 
 ## Development
 
-Run the included smoke test:
-
 ```bash
 npm run smoke
+npm test
 ```
 
-Run the raw-vs-compact demo:
+## Publishing state
 
-```bash
-npm run demo
-```
+This repo is intended to be open-source ready. The remaining publish-time items are explicit rather than placeholder-y.
 
-## Suggested GitHub polish before publishing
-
-- Replace `YOUR_ORG` placeholders in `package.json`
-- Add screenshots or terminal captures in the README
-- Decide whether the package name should stay `context-optimizer-toolkit` or shorten to `context-optimizer`
-- Add benchmark fixtures from real-world repositories if you want stronger credibility
-
-## Limitations
-
-- CSV parsing is intentionally simple and does not handle every quoted edge case.
-- JSON summaries are structural, not semantic.
-- Log grouping uses lightweight normalization rules, not full template mining.
-- This is an MVP focused on deterministic usefulness, not exhaustive parsing.
+- Set your final GitHub repository URL in `package.json`
+- Add screenshots if you want a nicer package page
+- Add real-world fixtures if you want benchmark credibility
 
 ## License
 
